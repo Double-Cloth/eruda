@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Eruda 离线调试验证</title>
+  <style>
+    body { font: 16px system-ui; padding: 20px; color: #1e293b; background: #f8fafc; }
+    button { padding: 10px; margin: 5px 0; }
+  </style>
+  <script>window.fixtureHead = 'head 阶段执行'; console.log(window.fixtureHead);</script>
+</head>
+<body>
+  <h1>手机离线调试</h1>
+  <p>用于验证页面日志、请求捕获和油猴菜单。</p>
+  <button id="log">输出页面日志</button>
+  <button id="request">发起本地数据请求</button>
+  <div id="menus"></div>
+  <script>
+    document.querySelector('#log').onclick = () => console.log('来自页面的日志', { answer: 42 });
+    document.querySelector('#request').onclick = () => fetch('data:application/json,%7B%22ok%22%3Atrue%7D').then(r => r.json()).then(console.log);
+    localStorage.setItem('offline-fixture', '可离线读取');
+    window.fixtureBody = 'body 阶段执行';
+    console.log(window.fixtureBody);
+  </script>
+</body>
+</html>

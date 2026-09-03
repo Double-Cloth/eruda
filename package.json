@@ -1,0 +1,17 @@
+{
+  "name": "eruda-offline-userscript",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "手机浏览器离线 Eruda 油猴脚本",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "update:eruda": "node scripts/update-eruda.mjs",
+    "test": "node --test",
+    "test:browser": "node scripts/browser-check.mjs",
+    "check": "npm run build && npm test",
+    "release": "node scripts/release.mjs"
+  }
+}

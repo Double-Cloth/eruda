@@ -1,0 +1,55 @@
+name: 更新 Eruda 并发布离线脚本
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: eruda-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 检查上游稳定版本并下载校验
+        run: npm run update:eruda
+      - name: 离线构建和测试
+        run: npm run check
+      - name: 浏览器断网验证
+        run: npm run test:browser
+      - name: 保存上游更新
+        shell: bash
+        run: |
+          if ! git diff --quiet -- vendor; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add vendor
+            git commit -m 'chore: update bundled Eruda'
+            git push origin HEAD:main
+          fi
+      - name: 发布或校验现有 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run release
+      - name: 保存本次构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: eruda-offline-userscript
+          path: dist/
+          retention-days: 30

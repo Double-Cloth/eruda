@@ -1,0 +1,10 @@
+{
+  "name": "eruda",
+  "version": "3.4.3",
+  "license": "MIT",
+  "tarball": "https://registry.npmjs.org/eruda/-/eruda-3.4.3.tgz",
+  "integrity": "sha512-J2TsF4dXSspOXev5bJ6mljv0dRrxj21wklrDzbvPmYaEmVoC+2psylyRi70nUPFh1mTQfIBsSusUtAMZtUN+/w==",
+  "licenseUrl": "https://raw.githubusercontent.com/liriliri/eruda/50cc399d3b5ff6135515a95e1c97f49eef32745d/LICENSE",
+  "sha256": "332f95b14b1dc53cdbe6042e0ea95ac6025ac691c285d51b647c64360fe939e2",
+  "licenseSha256": "a63e866a22fad1c03e838dd548e2d4331a416a3385ebc0ea85d9dcb832785592"
+}
