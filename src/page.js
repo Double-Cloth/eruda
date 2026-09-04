@@ -18,6 +18,8 @@ function pageMain(options) {
   let networkHooks = [];
   let errorMessage = '';
   let disposeEditor;
+  const iconFonts = /* ICON_FONTS */ [];
+  const registeredFonts = [];
 
   /* ELEMENTS_EDITOR */
 
@@ -44,6 +46,22 @@ function pageMain(options) {
     for (const hook of networkHooks) {
       if (hook.target[hook.key] === hook.wrapped) hook.target[hook.key] = hook.original;
     }
+  }
+
+  function registerIconFonts() {
+    // 直接解码内嵌字体，不通过 data: URL 加载，兼容 GitHub 等限制 font-src 的页面。
+    for (const { family, data } of iconFonts) {
+      const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+      const font = new FontFace(family, bytes);
+      document.fonts.add(font);
+      registeredFonts.push(font);
+      font.loaded.catch((error) => console.warn('[Eruda 离线调试] 图标字体加载失败：', error));
+    }
+  }
+
+  function removeIconFonts() {
+    for (const font of registeredFonts) document.fonts.delete(font);
+    registeredFonts.length = 0;
   }
 
   function applyEntry() {
@@ -204,6 +222,7 @@ function pageMain(options) {
     container = document.createElement('div');
     document.documentElement.appendChild(container);
     try {
+      registerIconFonts();
       eruda.init({ container, useShadowDom: true,
         tool: ['console', 'elements', 'network', 'sources', 'info', 'snippets'],
         defaults: { displaySize: 65, transparency: 1 } });
@@ -243,6 +262,7 @@ function pageMain(options) {
       disposeEditor?.();
       disposeEditor = null;
       try { eruda.destroy(); } catch { /* 初始化不完整时仍移除自己的容器。 */ }
+      removeIconFonts();
       restoreNetwork();
       container.remove();
       initialized = false;
@@ -254,6 +274,7 @@ function pageMain(options) {
     disposeEditor?.();
     disposeEditor = null;
     if (initialized) eruda.destroy();
+    removeIconFonts();
     restoreNetwork();
     initialized = false;
     visible = false;

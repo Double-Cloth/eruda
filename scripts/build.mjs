@@ -2,6 +2,25 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { Script } from 'node:vm';
 import { path, readJson, writeJson, sha256, stableVersion, repository } from './lib.mjs';
 
+export function embedIconFonts(source) {
+  const fonts = [];
+  let code = source.replace(/@font-face\{[^}]+\}/g, (rule) => {
+    const family = rule.match(/font-family:([\w-]+);/)?.[1];
+    const data = rule.match(/data:application\/x-font-woff;charset=utf-8;base64,([A-Za-z0-9+/=]+)/)?.[1];
+    if (!family || !data) throw new Error('无法识别上游图标字体，拒绝生成缺失图标的脚本。');
+    fonts.push({ family, data });
+    return '';
+  });
+  if (!fonts.length) throw new Error('未找到上游图标字体，请检查 Eruda 的资源格式。');
+  for (const font of fonts) {
+    const family = `eruda-offline-${font.family}`;
+    // 字体注册在 document.fonts，使用独立名称避免影响页面自身的 Eruda。
+    code = code.replaceAll(`font-family:${font.family}`, `font-family:${family}`);
+    font.family = family;
+  }
+  return { code, fonts };
+}
+
 export async function build({ repo, output = path('dist') } = {}) {
   const pkg = await readJson(path('package.json'));
   const vendor = await readJson(path('vendor/eruda.json'));
@@ -39,8 +58,9 @@ export async function build({ repo, output = path('dist') } = {}) {
   let page = await readFile(path('src/page.js'), 'utf8');
   const editor = await readFile(path('src/elements-editor.js'), 'utf8');
   page = page.replace('/* ELEMENTS_EDITOR */', () => editor);
-  const embedded = source.toString().replace(/^\/\/[#@] sourceMappingURL=.*$/gm, '');
-  page = page.replace('/* ERUDA_VENDOR */', () => embedded);
+  const embedded = embedIconFonts(source.toString().replace(/^\/\/[#@] sourceMappingURL=.*$/gm, ''));
+  page = page.replace('/* ICON_FONTS */ []', () => JSON.stringify(embedded.fonts));
+  page = page.replace('/* ERUDA_VENDOR */', () => embedded.code);
   const controller = (await readFile(path('src/userscript.js'), 'utf8'))
     .replace('__SCRIPT_VERSION__', version)
     .replace('__ERUDA_VERSION__', vendor.version)

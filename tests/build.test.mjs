@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
-import { build } from '../scripts/build.mjs';
+import { build, embedIconFonts } from '../scripts/build.mjs';
 import { compareVersions, repository } from '../scripts/lib.mjs';
 import { extractPackage, verifyIntegrity } from '../scripts/update-eruda.mjs';
 
@@ -26,10 +26,28 @@ test('同一输入离线构建可复现，并包含完整源码、许可证及�
     assert.match(source, /@grant\s+GM\.unregisterMenuCommand/);
     assert.doesNotMatch(source, /^\/\/\s*@(require|resource)\s/m);
     assert.equal(/^\/\/[#@] sourceMappingURL=/m.test(source), false);
-    assert.doesNotMatch(source, /ERUDA_VENDOR|ELEMENTS_EDITOR|PAGE_MAIN|__SCRIPT_VERSION__|__ERUDA_VERSION__/);
+    assert.doesNotMatch(source, /ERUDA_VENDOR|ELEMENTS_EDITOR|ICON_FONTS|PAGE_MAIN|__SCRIPT_VERSION__|__ERUDA_VERSION__/);
+    assert.doesNotMatch(source, /@font-face/);
     const meta = await readFile(join(output, 'eruda-offline.meta.js'), 'utf8');
     assert.ok(source.startsWith(meta));
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('提取全部上游字体并保留原始 WOFF 数据，未知格式拒绝构建', async () => {
+  const source = await readFile(new URL('../vendor/eruda.js', import.meta.url), 'utf8');
+  const { code, fonts } = embedIconFonts(source);
+  const original = [...source.matchAll(/@font-face\{[^}]+\}/g)];
+  assert.equal(fonts.length, original.length);
+  assert.ok(fonts.some(({ family }) => family === 'eruda-offline-eruda-icon'));
+  for (const [index, { family, data }] of fonts.entries()) {
+    assert.ok(original[index][0].includes(data));
+    assert.equal(Buffer.from(data, 'base64').subarray(0, 4).toString(), 'wOFF');
+    assert.ok(code.includes(`font-family:${family}`));
+  }
+  assert.doesNotMatch(code, /@font-face|data:application\/x-font-woff/);
+  assert.ok(code.includes('[class^=eruda-icon-]'), '字体改名不改变工具栏图标的 class 选择器');
+  assert.throws(() => embedIconFonts(''), /未找到/);
+  assert.throws(() => embedIconFonts('@font-face{font-family:changed;src:url(remote.woff)}'), /无法识别/);
 });
 
 test('版本按数字比较，拒绝预发布版本和不合法仓库', () => {

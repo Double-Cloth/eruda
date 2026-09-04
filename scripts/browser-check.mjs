@@ -4,6 +4,7 @@ import { mkdtemp, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createServer } from 'node:http';
 import assert from 'node:assert/strict';
 import { path } from './lib.mjs';
 import { checkElements } from './browser-elements-check.mjs';
@@ -51,6 +52,7 @@ function startupFailure(reason) {
   return new Error(`${reason}\n浏览器：${executable}\n退出码：${browser.exitCode}，信号：${browser.signalCode}\n${browserStderr.trim() || '浏览器没有输出错误日志。'}`);
 }
 let socket;
+let server;
 
 try {
   let portInfo;
@@ -104,8 +106,16 @@ try {
   }
   const source = await readFile(path('dist/eruda-offline.user.js'), 'utf8');
   const fixture = await readFile(path('tests/fixtures/gm.js'), 'utf8');
-  const url = pathToFileURL(path('tests/fixtures/page.html')).href;
-  for (const mode of ['desktop', 'legacy', 'modern', 'injected', 'no-menu']) {
+  const html = await readFile(path('tests/fixtures/page.html'));
+  // 用响应头确保策略在用户脚本启动前生效，比 GitHub 的字体白名单更严格。
+  server = createServer((request, response) => {
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "font-src 'none'" });
+    response.end(html);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const cspUrl = `http://127.0.0.1:${server.address().port}/`;
+  for (const mode of ['csp', 'desktop', 'legacy', 'modern', 'injected', 'no-menu']) {
+    const url = mode === 'csp' ? cspUrl : pathToFileURL(path('tests/fixtures/page.html')).href;
     const { browserContextId } = await send('Target.createBrowserContext');
     const { targetId } = await send('Target.createTarget', { url: 'about:blank', browserContextId });
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
@@ -113,6 +123,8 @@ try {
     await cdp('Page.enable');
     await cdp('Runtime.enable');
     await cdp('Network.enable');
+    await cdp('DOM.enable');
+    await cdp('CSS.enable');
     await cdp('Emulation.setDeviceMetricsOverride', { width: mode === 'desktop' ? 1280 : 390, height: 844, deviceScaleFactor: 1, mobile: mode !== 'desktop' });
     await cdp('Emulation.setTouchEmulationEnabled', { enabled: mode !== 'desktop' });
     let adapter = '';
@@ -142,10 +154,27 @@ try {
     const startupStart = requests.length;
     await cdp('Page.navigate', { url });
     await waitFor(`document.readyState === 'complete' && !!document.querySelector('#eruda-offline-panel')?.shadowRoot`);
-    assert.deepEqual(requests.slice(startupStart).filter((request) => request !== url && !/^(data|blob):/.test(request)), [], '启动仅加载测试页面和内嵌资源');
+    assert.deepEqual(requests.slice(startupStart).filter((request) => request !== url && !request.endsWith('/favicon.ico') && !/^(data|blob):/.test(request)), [], '启动仅加载测试页面和内嵌资源');
     const root = `document.querySelector('#eruda-offline-panel').shadowRoot`;
     assert.equal(await evaluate('window.eruda.sentinel'), true, '保留页面已有 Eruda');
     const entryDisplay = `getComputedStyle(${root}.querySelector('.eruda-entry-btn')).display`;
+    const assertIconFont = async (selector) => {
+      assert.equal(await evaluate(`(() => {
+        const el = ${root}.querySelector(${JSON.stringify(selector)});
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && parseFloat(getComputedStyle(el, '::before').fontSize) > 0;
+      })()`), true, `${selector} 应有可见尺寸，不能因工具栏样式失效变成零字号`);
+      await cdp('DOM.getDocument', { depth: -1, pierce: true });
+      const { result } = await cdp('Runtime.evaluate', { expression: `${root}.querySelector(${JSON.stringify(selector)})` });
+      const { nodeId } = await cdp('DOM.requestNode', { objectId: result.objectId });
+      const { node } = await cdp('DOM.describeNode', { nodeId, depth: 1 });
+      const before = node.pseudoElements?.find((item) => item.pseudoType === 'before');
+      assert.ok(before, `${selector} 应生成图标伪元素`);
+      const { fonts } = await cdp('CSS.getPlatformFontsForNode', { nodeId: before.nodeId });
+      assert.ok(fonts.some((font) => font.isCustomFont && font.glyphCount > 0),
+        `${mode}：${selector} 应实际使用内嵌字体绘制，实际 ${JSON.stringify(fonts)}`);
+      await cdp('Runtime.releaseObject', { objectId: result.objectId });
+    };
     const assertEntryCentered = async () => {
       const offset = await evaluate(`(() => {
         const entry = ${root}.querySelector('.eruda-entry-btn');
@@ -157,6 +186,7 @@ try {
       })()`);
       assert.ok(offset.width > 0 && offset.height > 0 && offset.x < 1 && offset.y < 1,
         `${mode}：悬浮球显示后图标应居中，实际偏差 ${JSON.stringify(offset)}`);
+      await assertIconFont('.eruda-icon-tool');
     };
     if (mode === 'no-menu') {
       assert.notEqual(await evaluate(entryDisplay), 'none');
@@ -171,6 +201,20 @@ try {
     await menu('打开调试面板');
     assert.equal(await evaluate(`window.fixtureMenus.has('Eruda：关闭调试面板')`), true);
     await waitFor(`${root}.textContent.includes('body 阶段执行')`);
+    await evaluate('document.fonts.ready');
+    await assertIconFont('.eruda-clear-console');
+    await evaluate(`console.log('ICON_CLEAR_PROBE')`);
+    await waitFor(`${root}.textContent.includes('ICON_CLEAR_PROBE')`);
+    await evaluate(`${root}.querySelector('.eruda-clear-console').click()`);
+    await waitFor(`!${root}.textContent.includes('ICON_CLEAR_PROBE')`);
+    if (mode === 'csp') {
+      await menu('显示悬浮球');
+      await assertEntryCentered();
+      await mkdir(path('output/playwright'), { recursive: true });
+      const screenshot = await cdp('Page.captureScreenshot', { format: 'png' });
+      await writeFile(path('output/playwright/csp-icons.png'), Buffer.from(screenshot.data, 'base64'));
+      await menu('隐藏悬浮球');
+    }
     await evaluate(`console.log('OFFLINE_PAGE_LOG', { answer: 42 }); fetch('data:application/json,%7B%22ok%22%3Atrue%7D').then(r => r.json())`);
     await waitFor(`${root}.textContent.includes('OFFLINE_PAGE_LOG')`);
     const probeStart = requests.length;
@@ -388,6 +432,7 @@ try {
     await menu('关闭调试面板');
     assert.notEqual(await evaluate('console.log === window.fixtureOriginalConsole'), true, '隐藏面板仍采集日志');
     await menu('停止本页');
+    assert.equal(await evaluate(`Array.from(document.fonts).filter(font => font.family.startsWith('eruda-offline-')).length`), 0, '停止后释放本实例注册的字体');
     assert.equal(await evaluate(`!!document.querySelector('#eruda-offline-panel')`), false);
     assert.equal(await evaluate('console.log === window.fixtureCapturedConsole'), false, '停止后移除 console 采集包装');
     assert.equal(await evaluate('window.fetch === window.fixtureOriginalFetch'), true, '停止后恢复 fetch');
@@ -395,6 +440,8 @@ try {
     await waitFor(`!!document.querySelector('#eruda-offline-panel')`);
     await evaluate(`console.log('重新启动成功')`);
     await waitFor(`${root}.textContent.includes('重新启动成功')`);
+    await evaluate('document.fonts.ready');
+    await assertIconFont('.eruda-clear-console');
     await sleep(400);
     assert.equal(await evaluate(`getComputedStyle(${root}.querySelector('.eruda-dev-tools')).display`), 'block', '快速重开后保持可见');
     assert.equal(await evaluate(`getComputedStyle(${root}.querySelector('.eruda-dev-tools')).opacity`), '1');
@@ -416,6 +463,9 @@ try {
     assert.equal(await evaluate(`JSON.parse(localStorage.getItem('fixture:eruda-offline:preferences:v1')).hideEntry`), false, '刷新前偏好已写入存储');
     // Page.navigate 返回时旧文档仍可能可见，不能只用 readyState 判断刷新完成。
     await evaluate('window.fixturePreviousDocument = true');
+    if (mode === 'csp') {
+      await cdp('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    }
     await cdp('Page.navigate', { url });
     await waitFor(`window.fixturePreviousDocument !== true && document.readyState === 'complete' && !!document.querySelector('#eruda-offline-panel')?.shadowRoot`);
     assert.notEqual(await evaluate(entryDisplay), 'none', '刷新后保留悬浮球偏好');
@@ -428,5 +478,6 @@ try {
   console.log('浏览器验证全部通过。');
 } finally {
   socket?.close();
+  server?.close();
   browser.kill();
 }
