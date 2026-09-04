@@ -24,7 +24,7 @@ test('同一输入离线构建可复现，并包含完整源码、许可证及�
     assert.match(source, /@version\s+\d+\.\d+\.\d+\.\d+\.\d+\.\d+/);
     assert.doesNotMatch(source, /^\/\/\s*@(require|resource)\s/m);
     assert.equal(/^\/\/[#@] sourceMappingURL=/m.test(source), false);
-    assert.doesNotMatch(source, /ERUDA_VENDOR|PAGE_MAIN|__SCRIPT_VERSION__|__ERUDA_VERSION__/);
+    assert.doesNotMatch(source, /ERUDA_VENDOR|ELEMENTS_EDITOR|PAGE_MAIN|__SCRIPT_VERSION__|__ERUDA_VERSION__/);
     const meta = await readFile(join(output, 'eruda-offline.meta.js'), 'utf8');
     assert.ok(source.startsWith(meta));
   } finally { globalThis.fetch = originalFetch; }

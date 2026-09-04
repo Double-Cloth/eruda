@@ -37,6 +37,8 @@ export async function build({ repo, output = path('dist') } = {}) {
     '// ==/UserScript==', '',
   ].join('\n');
   let page = await readFile(path('src/page.js'), 'utf8');
+  const editor = await readFile(path('src/elements-editor.js'), 'utf8');
+  page = page.replace('/* ELEMENTS_EDITOR */', () => editor);
   const embedded = source.toString().replace(/^\/\/[#@] sourceMappingURL=.*$/gm, '');
   page = page.replace('/* ERUDA_VENDOR */', () => embedded);
   const controller = (await readFile(path('src/userscript.js'), 'utf8'))

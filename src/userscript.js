@@ -118,8 +118,7 @@
     } catch (error) { storageWarning = `无法读取设置：${error.message}`; }
 
     const menus = [
-      ['Eruda：打开调试面板', () => command('show')],
-      ['Eruda：关闭调试面板（保留采集）', () => command('hide')],
+      ['Eruda：打开 / 关闭调试面板', () => command('toggle')],
       ['Eruda：显示 / 隐藏悬浮球', async () => {
         preferences.hideEntry = !preferences.hideEntry;
         await save();

@@ -19,6 +19,7 @@ async function harness({ mode = 'legacy', saved = {}, frame = false, storageFail
     dispatchEvent(event) {
       const command = JSON.parse(event.detail);
       actions.push(command.action);
+      if (command.action === 'toggle') { state.initialized = true; state.visible = !state.visible; }
       if (command.action === 'show' || command.action === 'start') state.initialized = true;
       if (command.action === 'show') state.visible = true;
       if (command.action === 'hide') state.visible = false;
@@ -65,11 +66,11 @@ async function harness({ mode = 'legacy', saved = {}, frame = false, storageFail
 for (const mode of ['legacy', 'modern']) {
   test(`${mode} GM API：菜单开关、悬浮球、停止后重开及持久化`, async () => {
     const h = await harness({ mode });
-    assert.equal(h.menus.size, 6);
+    assert.equal(h.menus.size, 5);
     assert.equal(h.state.initialized, true);
-    await h.click('打开调试');
+    await h.click('打开 / 关闭');
     assert.equal(h.state.visible, true);
-    await h.click('关闭调试');
+    await h.click('打开 / 关闭');
     assert.equal(h.state.visible, false);
     assert.equal(h.state.initialized, true);
     await h.click('显示 / 隐藏');
@@ -77,7 +78,7 @@ for (const mode of ['legacy', 'modern']) {
     assert.equal(h.saves.at(-1).value.hideEntry, false);
     await h.click('停止本页');
     assert.equal(h.state.initialized, false);
-    await h.click('打开调试');
+    await h.click('打开 / 关闭');
     assert.equal(h.state.initialized, true);
     await h.click('切换自动采集');
     assert.equal(h.saves.at(-1).value.autoStart, false);
@@ -87,7 +88,7 @@ for (const mode of ['legacy', 'modern']) {
 test('关闭自动采集时保持惰性，仍可手动打开', async () => {
   const h = await harness({ saved: { autoStart: false, hideEntry: true } });
   assert.equal(h.actions.length, 0);
-  await h.click('打开调试');
+  await h.click('打开 / 关闭');
   assert.equal(h.state.visible, true);
 });
 

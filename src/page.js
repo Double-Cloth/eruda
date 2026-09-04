@@ -17,6 +17,9 @@ function pageMain(options) {
   let outline;
   let networkHooks = [];
   let errorMessage = '';
+  let disposeEditor;
+
+  /* ELEMENTS_EDITOR */
 
   function report() {
     bridge.dispatchEvent(new CustomEvent(statusEvent, {
@@ -47,9 +50,54 @@ function pageMain(options) {
     if (!initialized) return;
     const entry = eruda.get('entryBtn');
     hiddenEntry ? entry.hide() : entry.show();
+    // 上游 show() 恢复的是 div 的默认 display:block，会覆盖浮球原本的 flex 居中。
+    if (!hiddenEntry) container.shadowRoot.querySelector('.eruda-entry-btn').style.display = 'flex';
   }
 
   function configureOfflineTools() {
+    const consoleTool = eruda.get('console');
+    const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[char]);
+    const safeStyleNames = ['color', 'background-color', 'font-size', 'font-weight', 'font-style',
+      'text-decoration-line', 'text-decoration-color', 'text-align', 'letter-spacing',
+      'word-spacing', 'line-height', 'padding', 'margin', 'border-width', 'border-style', 'border-color'];
+    function sanitizeLogArgs(args) {
+      if (typeof args[0] !== 'string' || args.length < 2) return args;
+      const result = args.slice();
+      let index = 0;
+      // 与 Eruda 的占位符扫描一致：连续百分号后仍可能识别 %c。
+      for (const [, token] of args[0].matchAll(/%([sdifoOc])/g)) {
+        index++;
+        if (index >= args.length) break;
+        // 上游对 %s 和原始字符串 %o/%O 不做 HTML 转义，避免它们生成远程媒体节点。
+        if (token === 's' || ((token === 'o' || token === 'O') && typeof args[index] === 'string')) {
+          result[index] = escapeHtml(args[index]);
+        }
+        if (token !== 'c') continue;
+        // 解析在未挂载的元素上进行；只复制不会加载图片或字体的标准 CSS 属性。
+        const style = document.createElement('span').style;
+        style.cssText = typeof args[index] === 'string' ? args[index] : '';
+        result[index] = safeStyleNames.map((name) => {
+          const value = style.getPropertyValue(name);
+          // 不传递变量、转义或引号，避免页面 CSS 和后续 HTML 拼接引入资源。
+          return value && !/["'<>\\]|var\(|url\(/i.test(value) ? `${name}:${value}` : '';
+        }).filter(Boolean).join(';');
+      }
+      return result;
+    }
+    for (const name of ['log', 'info', 'debug', 'warn', 'error', 'assert', 'group', 'groupCollapsed']) {
+      const original = consoleTool[name].bind(consoleTool);
+      consoleTool[name] = (...args) => name === 'assert'
+        ? original(args[0], ...sanitizeLogArgs(args.slice(1)))
+        : original(...sanitizeLogArgs(args));
+    }
+    // 原生 HTML 日志会把 img、iframe、style 等直接挂载进调试界面。
+    consoleTool.html = (html) => consoleTool.log(String(html));
+    const info = eruda.get('info');
+    info.remove('Sponsor this Project');
+    info.add('About', `Eruda ${eruda.version} · 离线内嵌版`);
+
     const sources = eruda.get('sources');
     const setSource = sources.set.bind(sources);
     const showSource = sources.show.bind(sources);
@@ -165,6 +213,7 @@ function pageMain(options) {
       container.shadowRoot.appendChild(visibilityStyle);
       initialized = true;
       configureOfflineTools();
+      disposeEditor = installElementsEditor(eruda, container);
       // 使用公开 API；清除会从 CDN 加载插件的上游快捷命令。
       const snippets = eruda.get('snippets');
       snippets.clear();
@@ -191,6 +240,8 @@ function pageMain(options) {
       eruda.hide();
       applyEntry();
     } catch (error) {
+      disposeEditor?.();
+      disposeEditor = null;
       try { eruda.destroy(); } catch { /* 初始化不完整时仍移除自己的容器。 */ }
       restoreNetwork();
       container.remove();
@@ -200,6 +251,8 @@ function pageMain(options) {
   }
 
   function stop() {
+    disposeEditor?.();
+    disposeEditor = null;
     if (initialized) eruda.destroy();
     restoreNetwork();
     initialized = false;
@@ -216,6 +269,7 @@ function pageMain(options) {
       errorMessage = '';
       switch (command.action) {
         case 'start': initialize(); break;
+        case 'toggle': initialize(); visible ? eruda.hide() : eruda.show(); break;
         case 'show': initialize(); eruda.show(); break;
         case 'hide': if (initialized) eruda.hide(); break;
         case 'entry': hiddenEntry = Boolean(command.hidden); applyEntry(); break;
