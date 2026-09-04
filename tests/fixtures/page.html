@@ -16,6 +16,16 @@
   <p id="dom-edit-target" data-note="before">原始文字</p>
   <div id="div-parent"><div id="div-empty"></div><div id="div-nested"><div>无属性的 div</div></div><div id="div-dynamic">更新前</div></div>
   <div id="div-shadow"><span>Shadow DOM 宿主</span></div>
+  <section id="event-target" data-note="原有属性" aria-label="事件测试"><button id="event-a" type="button">甲</button><button id="event-b" type="button">乙</button><input id="event-input" value="默认值"><!--原注释--></section>
+  <table id="edit-table"><tbody id="edit-tbody"><tr id="edit-tr"><td id="edit-td">单元格</td></tr></tbody></table>
+  <svg id="edit-svg" viewBox="0 0 20 20"><g id="edit-svg-group"><circle id="edit-circle" cx="5" cy="5" r="2"></circle></g></svg>
+  <math id="edit-math"><mi id="edit-mi">x</mi></math>
+  <template id="edit-template"><button id="template-button">模板内容</button></template>
+  <textarea id="edit-textarea">默认文本</textarea>
+  <select id="edit-select"><option id="edit-option" value="a">选项</option></select>
+  <input id="edit-checkbox" type="checkbox" checked disabled>
+  <div id="edit-anonymous"><button type="button">无 id 甲</button><button type="button">无 id 乙</button></div>
+  <div id="edit-mixed"><span id="edit-convert">可转换节点</span><b>保留同级</b></div>
   <button id="log">输出页面日志</button>
   <button id="request">发起本地数据请求</button>
   <div id="menus"></div>

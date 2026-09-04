@@ -11,12 +11,13 @@ function installElementsEditor(eruda, container) {
   let mode = 'html';
   let originalAttribute = '';
   let baseline;
+  let baselineNodes;
   let disposed = false;
   const style = document.createElement('style');
   style.textContent = `
     .eruda-dom-edit-trigger { float:right; padding:0 12px; cursor:pointer; font:inherit; color:inherit; background:transparent; border:0; height:30px; }
     .eruda-dom-editor[hidden] { display:none !important; }
-    .eruda-dom-editor { position:absolute; inset:0; z-index:10; display:flex; flex-direction:column; gap:10px; padding:12px; box-sizing:border-box; background:#fff; color:#222; font:14px/1.5 system-ui,sans-serif; overflow:auto; }
+    .eruda-dom-editor { position:absolute; inset:0; z-index:10; display:flex; flex-direction:column; gap:10px; padding:12px; box-sizing:border-box; background:#fff; color:#222; font:14px/1.5 system-ui,sans-serif; overflow:hidden; }
     .eruda-dom-editor[data-theme="dark"] { background:#202124; color:#e8eaed; color-scheme:dark; }
     .eruda-dom-editor header, .eruda-dom-editor nav, .eruda-dom-editor footer { display:flex; align-items:center; gap:8px; flex-wrap:wrap; flex-shrink:0; }
     .eruda-dom-editor header strong { flex:1; font-size:16px; }
@@ -24,7 +25,9 @@ function installElementsEditor(eruda, container) {
     .eruda-dom-editor button[aria-pressed="true"], .eruda-dom-editor button[type="submit"] { background:#1769d2; color:white; border-color:#1769d2; }
     .eruda-dom-editor button:disabled { opacity:.4; cursor:default; }
     .eruda-dom-editor input, .eruda-dom-editor textarea { display:block; width:100%; box-sizing:border-box; padding:8px; border:1px solid #888; border-radius:4px; background:transparent; color:inherit; font:16px/1.5 monospace; }
-    .eruda-dom-editor .eruda-dom-edit-content { display:flex; flex-direction:column; flex:1; min-height:100px; }
+    .eruda-dom-editor .eruda-dom-edit-fields { display:flex; flex-direction:column; flex:1; min-height:0; gap:10px; overflow:auto; padding-bottom:2px; }
+    .eruda-dom-editor .eruda-dom-edit-fields > * { flex-shrink:0; }
+    .eruda-dom-editor .eruda-dom-edit-content { display:flex; flex-direction:column; flex:1 0 146px; min-height:146px; }
     .eruda-dom-editor .eruda-dom-code { position:relative; flex:1; min-height:120px; --code-text:#222; --code-tag:#1756a9; --code-attribute:#854a00; --code-string:#13733c; --code-comment:#687078; --code-entity:#8e24aa; }
     .eruda-dom-editor[data-theme="dark"] .eruda-dom-code { --code-text:#e8eaed; --code-tag:#8ab4f8; --code-attribute:#fdd663; --code-string:#81c995; --code-comment:#a0a6ad; --code-entity:#d7aefb; }
     .eruda-dom-editor .eruda-dom-code textarea, .eruda-dom-editor .eruda-dom-code pre { position:absolute; inset:0; width:100%; height:100%; box-sizing:border-box; margin:0; padding:8px; font:16px/1.5 monospace; letter-spacing:normal; text-align:left; text-indent:0; text-transform:none; white-space:pre; overflow-wrap:normal; word-break:normal; tab-size:2; direction:ltr; }
@@ -43,6 +46,9 @@ function installElementsEditor(eruda, container) {
       .eruda-dom-editor .eruda-dom-code pre { visibility:hidden; }
     }
     .eruda-dom-editor .eruda-dom-edit-node { overflow-wrap:anywhere; opacity:.75; }
+    .eruda-dom-editor .eruda-dom-edit-attributes { display:flex; flex-direction:column; gap:6px; max-height:150px; overflow:auto; flex-shrink:0; }
+    .eruda-dom-editor .eruda-dom-edit-attributes button { text-align:left; overflow-wrap:anywhere; white-space:pre-wrap; }
+    .eruda-dom-editor [hidden] { display:none !important; }
     .eruda-dom-editor .eruda-dom-edit-hint { font-size:12px; opacity:.8; }
     .eruda-dom-editor [role="alert"] { color:#d93025; overflow-wrap:anywhere; }
   `.replaceAll('.eruda-dom-editor', '.eruda-container .eruda-dom-editor')
@@ -61,16 +67,19 @@ function installElementsEditor(eruda, container) {
   // 仅包含固定 UI 文本；用户 DOM 内容通过 value/textContent 写入。
   editor.innerHTML = `
     <header><strong>编辑 DOM</strong><button type="button" data-action="cancel">取消</button></header>
+    <div class="eruda-dom-edit-fields">
     <div class="eruda-dom-edit-node"></div>
     <nav aria-label="编辑类型">
       <button type="button" data-mode="html">HTML</button>
       <button type="button" data-mode="text">文本</button>
       <button type="button" data-mode="attribute">属性</button>
     </nav>
+    <div class="eruda-dom-edit-attributes" role="group" aria-label="现有属性"></div>
     <label class="eruda-dom-edit-name">属性名<input name="attributeName" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <label class="eruda-dom-edit-content"><span></span><div class="eruda-dom-code"><pre aria-hidden="true"><code></code></pre><textarea name="value" wrap="off" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></div></label>
     <div class="eruda-dom-edit-hint"></div>
     <div role="alert"></div>
+    </div>
     <footer><button type="submit">应用修改</button><button type="button" data-action="delete">删除属性</button></footer>
   `;
   tool.appendChild(editor);
@@ -80,6 +89,7 @@ function installElementsEditor(eruda, container) {
   const error = editor.querySelector('[role="alert"]');
   const nodeLabel = editor.querySelector('.eruda-dom-edit-node');
   const nameLabel = editor.querySelector('.eruda-dom-edit-name');
+  const attributeList = editor.querySelector('.eruda-dom-edit-attributes');
   const contentLabel = editor.querySelector('.eruda-dom-edit-content span');
   const hint = editor.querySelector('.eruda-dom-edit-hint');
   const removeButton = editor.querySelector('[data-action="delete"]');
@@ -152,51 +162,86 @@ function installElementsEditor(eruda, container) {
   value.addEventListener('scroll', syncCodeScroll);
 
   const isElement = (node) => node?.nodeType === Node.ELEMENT_NODE;
+  const isShadow = (node) => node?.nodeType === Node.DOCUMENT_FRAGMENT_NODE && !!node.host;
+  const content = (node) => node.namespaceURI === 'http://www.w3.org/1999/xhtml' && node.localName === 'template' ? node.content : node;
   const structuralRoot = (node) => [document.documentElement, document.head, document.body].includes(node);
-  const editable = (node) => node?.isConnected && [1, 3, 8].includes(node.nodeType)
+  const editable = (node) => node?.isConnected && ([1, 3, 8].includes(node.nodeType) || isShadow(node))
     && node !== container && node !== document.getElementById('eruda-offline-bridge')
     && node.getRootNode() !== root;
   function read() {
-    if (mode === 'attribute') return target.getAttribute(originalAttribute);
-    if (mode === 'text') return target.textContent;
-    return target.outerHTML;
+    if (mode === 'attribute') return JSON.stringify(Array.from(target.attributes, ({ name, value, namespaceURI }) => [name, value, namespaceURI]));
+    if (mode === 'text') return content(target).textContent;
+    if (isShadow(target)) return target.innerHTML;
+    if (isElement(target)) return target.outerHTML;
+    if (target.nodeType === Node.TEXT_NODE && ['script', 'style', 'xmp', 'iframe', 'noembed', 'noframes', 'plaintext'].includes(target.parentElement?.localName)) return target.nodeValue;
+    return new XMLSerializer().serializeToString(target);
   }
-  function setMode(nextMode, attribute = '') {
+  function snapshotNodes(node) {
+    const nodes = [];
+    const pending = [node];
+    while (pending.length) {
+      const current = pending.pop();
+      nodes.push(current);
+      for (const child of content(current).childNodes) pending.push(child);
+    }
+    return nodes;
+  }
+  function setMode(nextMode, attribute) {
     mode = nextMode;
-    originalAttribute = attribute;
-    nameInput.value = attribute;
+    originalAttribute = mode === 'attribute' ? (attribute ?? target.attributes[0]?.name ?? '') : '';
+    nameInput.value = originalAttribute;
     baseline = read();
-    value.value = baseline ?? '';
+    baselineNodes = mode === 'attribute' ? null : snapshotNodes(target);
+    value.value = mode === 'attribute' ? target.getAttribute(originalAttribute) ?? '' : baseline ?? '';
     value.scrollTop = 0;
     value.scrollLeft = 0;
     renderHighlight();
     nameLabel.hidden = mode !== 'attribute';
+    attributeList.hidden = mode !== 'attribute';
+    attributeList.replaceChildren();
+    if (mode === 'attribute') {
+      for (const attribute of target.attributes) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.attribute = attribute.name;
+        button.textContent = `${attribute.name}="${attribute.value}"`;
+        button.setAttribute('aria-pressed', String(attribute.name === originalAttribute));
+        attributeList.appendChild(button);
+      }
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.dataset.attribute = '';
+      add.textContent = target.attributes.length ? '+ 新增属性' : '暂无属性，点击新增';
+      attributeList.appendChild(add);
+    }
     removeButton.hidden = mode !== 'attribute';
-    removeButton.disabled = !originalAttribute || baseline === null;
+    removeButton.disabled = !originalAttribute || !target.hasAttribute(originalAttribute);
     contentLabel.textContent = { html: '节点 HTML', text: '文本内容', attribute: '属性值（可为空）' }[mode];
     hint.textContent = {
-      html: '替换整个节点。原节点及子节点上的事件绑定不会保留。',
-      text: isElement(target) ? '替换元素内的全部内容，子元素将变为纯文本。' : '修改当前文本或注释，不替换其他节点。',
-      attribute: '修改或新增属性，保留节点和事件绑定。',
+      html: isShadow(target) ? '编辑 ShadowRoot 内的 HTML，可包含多个节点；尽量复用原节点和事件绑定。'
+        : '按差异更新并尽量保留事件绑定；更换标签或节点类型时，该节点自身的绑定无法保留。',
+      text: isElement(target) || isShadow(target) ? '替换内部全部内容，子元素将变为纯文本。' : '修改当前文本或注释，不替换其他节点。',
+      attribute: '选择已有属性修改，或点击新增。空值保留属性，删除请用“删除属性”；布尔属性以是否存在为准。',
     }[mode];
     for (const button of editor.querySelectorAll('[data-mode]')) {
       button.disabled = button.dataset.mode === 'attribute' ? !isElement(target)
-        : structuralRoot(target) || (button.dataset.mode === 'html' && !isElement(target));
+        : structuralRoot(target);
       button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
     }
     error.textContent = '';
   }
-  function open(node, nextMode, attribute = '') {
+  function open(node, nextMode, attribute) {
     if (!editable(node)) return;
     target = node;
     nodeLabel.textContent = isElement(node) ? `<${node.localName}${node.id ? `#${node.id}` : ''}>`
-      : node.nodeType === Node.COMMENT_NODE ? '#comment' : '#text';
+      : isShadow(node) ? '#shadow-root' : node.nodeType === Node.COMMENT_NODE ? '#comment' : '#text';
     editor.dataset.theme = eruda.util.isDarkTheme() ? 'dark' : 'light';
     setMode(structuralRoot(node) ? 'attribute' : nextMode, attribute);
+    editor.querySelector('.eruda-dom-edit-fields').scrollTop = 0;
     editor.hidden = false;
     value.focus({ preventScroll: true });
   }
-  function close() { editor.hidden = true; target = null; }
+  function close() { editor.hidden = true; target = null; baselineNodes = null; baseline = null; }
   function selectedNode(node) { selected = node; }
   viewer.on('select', selectedNode);
   elements.on('change', selectedNode);
@@ -233,14 +278,18 @@ function installElementsEditor(eruda, container) {
     event.stopPropagation();
     rowViewer.select();
     selected = node;
-    open(node, name ? 'attribute' : isElement(node) ? 'html' : 'text', name || '');
+    open(node, name ? 'attribute' : isElement(node) || isShadow(node) ? 'html' : 'text', name);
   };
   tool.addEventListener('click', onClick, true);
-  trigger.addEventListener('click', () => open(selected || elements._curNode, isElement(selected || elements._curNode) ? 'html' : 'text'));
+  trigger.addEventListener('click', () => {
+    const node = selected || elements._curNode;
+    open(node, isElement(node) || isShadow(node) ? 'html' : 'text');
+  });
   editor.addEventListener('click', (event) => {
     const button = event.target.closest('button');
     if (button?.dataset.action === 'cancel') close();
     if (button?.dataset.mode && button.dataset.mode !== mode) setMode(button.dataset.mode);
+    if (button?.dataset.attribute !== undefined) setMode('attribute', button.dataset.attribute);
     if (button?.dataset.action === 'delete') apply(true);
   });
   editor.addEventListener('keydown', (event) => {
@@ -250,40 +299,159 @@ function installElementsEditor(eruda, container) {
   });
   editor.addEventListener('submit', (event) => { event.preventDefault(); apply(false); });
 
+  function attributeFor(name) {
+    const existing = target.getAttributeNode(name);
+    const namespaces = { xlink: 'http://www.w3.org/1999/xlink', xml: 'http://www.w3.org/XML/1998/namespace', xmlns: 'http://www.w3.org/2000/xmlns/' };
+    const prefix = name.includes(':') ? name.split(':')[0] : name === 'xmlns' ? 'xmlns' : '';
+    const namespace = existing?.namespaceURI || (Object.hasOwn(namespaces, prefix) && namespaces[prefix]) || (prefix && target.lookupNamespaceURI(prefix));
+    // 先验证名称和命名空间；未知前缀沿用普通属性的浏览器行为。
+    if (namespace) return target.ownerDocument.createAttributeNS(namespace, name);
+    return target.namespaceURI !== 'http://www.w3.org/1999/xhtml' && !prefix
+      ? target.ownerDocument.createAttributeNS(null, name) : target.ownerDocument.createAttribute(name);
+  }
+  function sameType(a, b) {
+    return a.nodeType === b.nodeType && (!isElement(a) || (a.namespaceURI === b.namespaceURI && a.localName === b.localName));
+  }
+  function equalNode(a, b) {
+    // isEqualNode 不比较 template.content，outerHTML 补齐模板内容比较。
+    return a.isEqualNode(b) && (!isElement(a) || a.outerHTML === b.outerHTML);
+  }
+  function syncAttributes(node, desired) {
+    for (const attribute of Array.from(node.attributes)) {
+      if (!desired.hasAttributeNS(attribute.namespaceURI, attribute.localName)) node.removeAttributeNode(attribute);
+    }
+    for (const attribute of desired.attributes) {
+      const current = node.getAttributeNodeNS(attribute.namespaceURI, attribute.localName);
+      // 不重复写入未改变的 onclick、src 等属性，保留运行状态并避免资源重载。
+      if (current?.value !== attribute.value || current?.name !== attribute.name) {
+        node.setAttributeNodeNS(node.ownerDocument.importNode(attribute, true));
+      }
+    }
+  }
+  function readFormState(node) {
+    if (!isElement(node) || node.namespaceURI !== 'http://www.w3.org/1999/xhtml') return null;
+    return { value: node.getAttribute('value'), checked: node.hasAttribute('checked'), selected: node.hasAttribute('selected'),
+      text: node.localName === 'textarea' ? node.textContent : null };
+  }
+  function syncFormState(node, previous) {
+    if (!previous) return;
+    // 只同步明确编辑的默认值，其余用户实时输入和选择继续保留。
+    if (node.localName === 'input') {
+      if (node.type !== 'file' && previous.value !== node.getAttribute('value')) node.value = node.getAttribute('value') || '';
+      if (previous.checked !== node.hasAttribute('checked')) node.checked = node.hasAttribute('checked');
+    }
+    if (node.localName === 'option' && previous.selected !== node.hasAttribute('selected')) node.selected = node.hasAttribute('selected');
+    if (node.localName === 'textarea' && previous.text !== node.textContent) node.value = node.textContent;
+  }
+  function patchChildren(parent, desired, source = parent) {
+    const oldChildren = Array.from(source.childNodes);
+    const newChildren = Array.from(desired.childNodes);
+    const used = new Set();
+    const key = (node) => isElement(node) ? node.getAttribute('id') || '' : '';
+    const newKeys = new Set(newChildren.map(key).filter(Boolean));
+    const keyed = new Map();
+    for (const child of oldChildren) {
+      const id = key(child);
+      if (id) keyed.set(id, keyed.has(id) ? null : child);
+    }
+    // 先预留可精确对应的节点，避免插入同类节点时夺走后面节点的事件绑定。
+    const matches = newChildren.map((child) => {
+      const id = key(child);
+      const match = id ? keyed.get(id) : oldChildren.find((old) => !used.has(old) && !key(old) && equalNode(old, child));
+      if (!match || used.has(match)) return null;
+      used.add(match);
+      return match;
+    });
+    let cursor = parent.firstChild;
+    newChildren.forEach((child, index) => {
+      const match = matches[index] || ((!key(child) || !keyed.has(key(child))) && oldChildren.find((old) =>
+        !used.has(old) && (!key(old) || !newKeys.has(key(old))) && sameType(old, child)));
+      if (match) used.add(match);
+      const next = match ? patchNode(match, child) : parent.ownerDocument.importNode(child, true);
+      if (match === cursor) cursor = next;
+      if (next !== cursor) parent.insertBefore(next, cursor);
+      cursor = next.nextSibling;
+    });
+    for (const child of oldChildren) {
+      if (!used.has(child)) child.remove();
+    }
+  }
+  function patchNode(node, desired) {
+    if (equalNode(node, desired)) return node;
+    if (!sameType(node, desired)) {
+      const replacement = node.ownerDocument.importNode(desired, false);
+      // 更换容器标签仍复用可匹配的子节点；根节点自身的监听器无法枚举或转移。
+      if (isElement(desired)) patchChildren(content(replacement), content(desired), content(node));
+      else replacement.nodeValue = desired.nodeValue;
+      node.replaceWith(replacement);
+      return replacement;
+    }
+    if (!isElement(node)) { node.nodeValue = desired.nodeValue; return node; }
+    const formState = readFormState(node);
+    syncAttributes(node, desired);
+    patchChildren(content(node), content(desired));
+    syncFormState(node, formState);
+    return node;
+  }
+  function parseHtml(source) {
+    // 无浏览上下文的文档不会下载输入中的资源；父节点上下文保留表格和 SVG/MathML 语义。
+    const inert = document.implementation.createHTMLDocument('');
+    const context = isShadow(target) ? null : target.parentElement;
+    const parent = context ? inert.importNode(context, false) : inert.createElement('div');
+    parent.innerHTML = source;
+    const parsed = content(parent);
+    if (isShadow(target)) return parsed;
+    const nodes = Array.from(parsed.childNodes);
+    // 元素或注释周围的排版空白不作为额外根节点；纯文本保留完整空白。
+    const meaningful = nodes.some((node) => node.nodeType !== Node.TEXT_NODE)
+      ? nodes.filter((node) => node.nodeType !== Node.TEXT_NODE || node.textContent.trim()) : nodes;
+    if (meaningful.length !== 1 || ![1, 3, 8].includes(meaningful[0].nodeType)) {
+      throw new Error('HTML 必须包含一个完整的元素、文本或注释节点。');
+    }
+    return meaningful[0];
+  }
   function apply(remove) {
     try {
       if (!editable(target)) throw new Error('该节点已被页面移除，请重新选择。');
       if (read() !== baseline) throw new Error('页面已更新该内容，请取消后重新打开编辑。');
+      if (baselineNodes) {
+        const current = snapshotNodes(target);
+        if (current.length !== baselineNodes.length || current.some((node, index) => node !== baselineNodes[index])) {
+          throw new Error('页面已更新该内容，请取消后重新打开编辑。');
+        }
+      }
       let nextSelection = target;
+      const formState = mode === 'html' ? null : readFormState(target);
       if (mode === 'attribute') {
         if (remove) target.removeAttribute(originalAttribute);
         else {
           const name = nameInput.value.trim();
           if (!name) throw new Error('请输入属性名。');
           // 在未挂载节点上验证名称，避免改名失败后丢失原属性。
-          document.createAttribute(name);
-          target.setAttribute(name, value.value);
-          const sameName = target.namespaceURI === 'http://www.w3.org/1999/xhtml'
-            ? name.toLowerCase() === originalAttribute.toLowerCase() : name === originalAttribute;
-          if (originalAttribute && !sameName) target.removeAttribute(originalAttribute);
+          const attribute = attributeFor(name);
+          const previous = target.getAttributeNode(originalAttribute);
+          const existing = target.getAttributeNodeNS(attribute.namespaceURI, attribute.localName);
+          if (existing && existing !== previous) throw new Error('该属性已存在，请从现有属性列表中选择，避免覆盖。');
+          attribute.value = value.value;
+          if (!previous || previous.name !== attribute.name || previous.value !== attribute.value || previous.namespaceURI !== attribute.namespaceURI) {
+            target.setAttributeNodeNS(attribute);
+          }
+          if (previous?.ownerElement === target && previous !== target.getAttributeNodeNS(attribute.namespaceURI, attribute.localName)) target.removeAttributeNode(previous);
         }
       } else {
         if (structuralRoot(target)) throw new Error('html、head、body 根节点请通过属性编辑或选择其子节点修改。');
-        if (mode === 'text') target.textContent = value.value;
-        else {
-          // 在没有浏览上下文的文档中按父节点上下文解析，支持 table/SVG 且不进行网络预览。
-          const inert = document.implementation.createHTMLDocument('');
-          const parent = target.parentElement ? inert.importNode(target.parentElement, false) : inert.createElement('div');
-          parent.innerHTML = value.value;
-          const nodes = Array.from(parent.childNodes).filter((node) => node.nodeType !== Node.TEXT_NODE || node.textContent.trim());
-          if (nodes.length !== 1 || !isElement(nodes[0])) throw new Error('HTML 必须包含一个完整的元素节点。');
-          const replacement = document.importNode(nodes[0], true);
-          // 先移开树中的选择，防止上游观察器在删除选中节点时留下失效引用。
-          elements.select(target.parentElement || target.getRootNode().host);
-          target.replaceWith(replacement);
-          nextSelection = replacement;
+        if (mode === 'text') {
+          if (value.value !== baseline) content(target).textContent = value.value;
+        } else if (value.value !== baseline) {
+          const desired = parseHtml(value.value);
+          if (isShadow(target)) patchChildren(target, desired);
+          else {
+            if (!sameType(target, desired)) elements.select(target.parentElement || target.getRootNode().host);
+            nextSelection = patchNode(target, desired);
+          }
         }
       }
+      syncFormState(target, formState);
       close();
       selected = nextSelection;
       setTimeout(() => {
@@ -292,7 +460,10 @@ function installElementsEditor(eruda, container) {
           eruda.get().notify('DOM 已修改', { icon: 'success' });
         }
       }, 0);
-    } catch (reason) { error.textContent = reason.message || String(reason); }
+    } catch (reason) {
+      error.textContent = reason.message || String(reason);
+      error.scrollIntoView({ block: 'nearest' });
+    }
   }
   return () => {
     disposed = true;

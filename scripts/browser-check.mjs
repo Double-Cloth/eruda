@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import { path } from './lib.mjs';
+import { checkElements } from './browser-elements-check.mjs';
 
 // 使用 Node 内置 WebSocket 和 Chrome DevTools Protocol，不增加 npm 依赖。
 function findChrome() {
@@ -351,6 +352,14 @@ try {
     await applyEdit();
     assert.match(await evaluate(`${editor}.querySelector('[role="alert"]').textContent`), /页面已更新/);
     await cancelEdit();
+    await checkElements({ evaluate, waitFor, editor, rowById, expandRow, editValue, applyEdit, cancelEdit,
+      screenshot: async (name) => {
+        if (!['desktop', 'legacy'].includes(mode)) return;
+        await mkdir(path('output/playwright'), { recursive: true });
+        const screenshot = await cdp('Page.captureScreenshot', { format: 'png' });
+        await writeFile(path(`output/playwright/${name}-${mode}.png`), Buffer.from(screenshot.data, 'base64'));
+      },
+    });
     for (const tab of ['elements', 'network', 'sources', 'info', 'snippets', 'resources', 'settings', 'console']) {
       await clickTab(tab);
       await sleep(100);
