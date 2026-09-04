@@ -7,6 +7,7 @@ function installElementsEditor(eruda, container) {
   if (!viewer?.on || !controls) throw new Error('当前 Eruda 的 Elements 结构不兼容 DOM 编辑功能。');
 
   let selected = null;
+  let pendingEdit = null;
   let target = null;
   let mode = 'html';
   let originalAttribute = '';
@@ -231,6 +232,7 @@ function installElementsEditor(eruda, container) {
     error.textContent = '';
   }
   function open(node, nextMode, attribute) {
+    pendingEdit = null;
     if (!editable(node)) return;
     target = node;
     nodeLabel.textContent = isElement(node) ? `<${node.localName}${node.id ? `#${node.id}` : ''}>`
@@ -242,7 +244,10 @@ function installElementsEditor(eruda, container) {
     value.focus({ preventScroll: true });
   }
   function close() { editor.hidden = true; target = null; baselineNodes = null; baseline = null; }
-  function selectedNode(node) { selected = node; }
+  function selectedNode(node) {
+    if (selected !== node) pendingEdit = null;
+    selected = node;
+  }
   viewer.on('select', selectedNode);
   elements.on('change', selectedNode);
   // 上游在选中节点被移除时调用了不存在的 set，导致观察器中断。
@@ -266,21 +271,29 @@ function installElementsEditor(eruda, container) {
     return null;
   }
   const onClick = (event) => {
-    if (editor.contains(event.target) || event.target.closest('.luna-dom-viewer-toggle')) return;
+    if (!tool.contains(event.target) || editor.contains(event.target) || event.target.closest('.luna-dom-viewer-toggle')) {
+      pendingEdit = null;
+      return;
+    }
     const row = event.target.closest('.luna-dom-viewer-tree-item');
-    if (!row) return;
+    if (!row) { pendingEdit = null; return; }
     const rowViewer = findRowViewer(row);
     const node = rowViewer?.getOption('node');
-    if (!editable(node)) return;
+    if (!editable(node)) { pendingEdit = null; return; }
     const attribute = event.target.closest('.luna-dom-viewer-attribute');
     const name = attribute?.querySelector('.luna-dom-viewer-attribute-name')?.textContent;
     // 捕获阶段统一处理，不依赖上游在触摸端 click、桌面端 mousedown 的事件差异。
     event.stopPropagation();
     rowViewer.select();
     selected = node;
+    // 第一次只选中；再次点击同一行的同一编辑位置才打开，兼容手机两次点按。
+    if (pendingEdit?.row !== row || pendingEdit.node !== node || pendingEdit.name !== name) {
+      pendingEdit = { row, node, name };
+      return;
+    }
     open(node, name ? 'attribute' : isElement(node) || isShadow(node) ? 'html' : 'text', name);
   };
-  tool.addEventListener('click', onClick, true);
+  root.addEventListener('click', onClick, true);
   trigger.addEventListener('click', () => {
     const node = selected || elements._curNode;
     open(node, isElement(node) || isShadow(node) ? 'html' : 'text');
@@ -472,7 +485,7 @@ function installElementsEditor(eruda, container) {
     elements.off('change', selectedNode);
     viewer.off('deselect', recoverSelection);
     viewer.on('deselect', originalBack);
-    tool.removeEventListener('click', onClick, true);
+    root.removeEventListener('click', onClick, true);
     trigger.remove(); editor.remove(); style.remove();
   };
 }

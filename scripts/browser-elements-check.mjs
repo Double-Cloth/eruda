@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 
 // 与完整离线验证共用浏览器、断网状态和 UI 入口，验证节点身份而不只比较 HTML。
-export async function checkElements({ evaluate, waitFor, editor, rowById, expandRow, editValue, applyEdit, cancelEdit, screenshot }) {
+export async function checkElements({ evaluate, waitFor, editor, rowById, expandRow, openEditor, editValue, applyEdit, cancelEdit, screenshot }) {
   const openElement = async (id) => {
     const ancestors = await evaluate(`(() => {
       const ids = []; let node = document.getElementById(${JSON.stringify(id)}).parentElement;
@@ -10,7 +10,7 @@ export async function checkElements({ evaluate, waitFor, editor, rowById, expand
     })()`);
     for (const ancestor of ancestors) { await waitFor(`!!(${rowById(ancestor)})`); await expandRow(rowById(ancestor)); }
     await waitFor(`!!(${rowById(id)})`);
-    await evaluate(`(${rowById(id)}).querySelector('.luna-dom-viewer-tag-name').click()`);
+    await openEditor(`(${rowById(id)}).querySelector('.luna-dom-viewer-tag-name')`);
     await waitFor(`!${editor}.hidden`);
   };
   const changeMode = (mode) => evaluate(`${editor}.querySelector('[data-mode="${mode}"]').click()`);
@@ -100,7 +100,7 @@ export async function checkElements({ evaluate, waitFor, editor, rowById, expand
   await expectApplied();
   assert.equal(await evaluate(`document.getElementById('edit-mixed').firstChild.nodeType`), 8);
   await waitFor(`(${rowById('edit-mixed')}).nextElementSibling.textContent.includes('转换后的注释')`);
-  await evaluate(`(${rowById('edit-mixed')}).nextElementSibling.querySelector('.luna-dom-viewer-tree-item').click()`);
+  await openEditor(`(${rowById('edit-mixed')}).nextElementSibling.querySelector('.luna-dom-viewer-tree-item')`);
   assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-edit-node').textContent`), '#comment');
   await changeMode('html');
   await editValue('转换后的纯文本 &amp; 内容');
@@ -163,7 +163,7 @@ export async function checkElements({ evaluate, waitFor, editor, rowById, expand
   await expandRow(rowById('div-shadow'));
   const shadowRow = `(${rowById('div-shadow')}).nextElementSibling.querySelector('.luna-dom-viewer-tree-item')`;
   await evaluate(`window.shadowRef = document.getElementById('div-shadow').shadowRoot; window.shadowChild = shadowRef.firstChild; window.shadowClicks = 0; shadowChild.addEventListener('click', () => shadowClicks++)`);
-  await evaluate(`(${shadowRow}).click()`);
+  await openEditor(shadowRow);
   assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-edit-node').textContent`), '#shadow-root');
   await editValue('<div id="shadow-child">Shadow HTML 更新</div><span>新增影子节点</span>');
   await expectApplied();

@@ -296,7 +296,13 @@ try {
     };
     const applyEdit = async () => evaluate(`${editor}.querySelector('button[type="submit"]').click()`);
     const cancelEdit = async () => evaluate(`${editor}.querySelector('[data-action="cancel"]').click()`);
-    const clickAttribute = async (name) => evaluate(`Array.from((${targetRow}).querySelectorAll('.luna-dom-viewer-attribute-name')).find(el => el.textContent === ${JSON.stringify(name)}).click()`);
+    const openEditor = async (expression) => {
+      await evaluate(`(${expression}).click()`);
+      assert.equal(await evaluate(`${editor}.hidden`), true, `${mode}：第一次点击只选中，不打开编辑器`);
+      await evaluate(`(${expression}).click()`);
+      assert.equal(await evaluate(`${editor}.hidden`), false, `${mode}：第二次点击同一位置打开编辑器`);
+    };
+    const clickAttribute = async (name) => openEditor(`Array.from((${targetRow}).querySelectorAll('.luna-dom-viewer-attribute-name')).find(el => el.textContent === ${JSON.stringify(name)})`);
     await ensureFixtureVisible();
     const rowById = (id) => `Array.from(${row}).find(el => Array.from(el.querySelectorAll('.luna-dom-viewer-attribute-value')).some(attr => attr.textContent === ${JSON.stringify(id)}))`;
     const expandRow = async (expression) => {
@@ -304,14 +310,13 @@ try {
       assert.equal(await evaluate(`${editor}.hidden`), true, '展开箭头不打开编辑器');
     };
     const openRow = async (expression, expectedId) => {
-      await evaluate(`(${expression}).click()`);
-      assert.equal(await evaluate(`${editor}.hidden`), false, `${mode}：div 点击应打开编辑器`);
+      await openEditor(expression);
       assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-edit-node').textContent`), `<div${expectedId ? '#' + expectedId : ''}>`, '编辑点击的 div，不沿用旧选择');
     };
     await expandRow(rowById('div-parent'));
     await openRow(rowById('div-empty'), 'div-empty');
     await cancelEdit();
-    // 使用真实输入事件覆盖触摸和鼠标，检查第一次及重复点击。
+    // 使用真实输入事件覆盖触摸和鼠标，关闭后仍需重新点击两次。
     for (let attempt = 0; attempt < 2; attempt++) {
       await evaluate(`(${rowById('div-empty')}).scrollIntoView({ block: 'center' })`);
       const point = await evaluate(`(() => {
@@ -319,18 +324,47 @@ try {
         const rect = el.getBoundingClientRect();
         return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
       })()`);
-      if (mode === 'desktop') {
-        await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
-        await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
-      } else {
-        await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
-        await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      for (let click = 1; click <= 2; click++) {
+        if (mode === 'desktop') {
+          await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
+          await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+        } else {
+          await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+          await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        }
+        assert.equal(await evaluate(`${editor}.hidden`), click === 1, `${mode}：真实输入第 ${click} 次点击的编辑器状态`);
+        if (click === 1) {
+          assert.equal(await evaluate(`(${rowById('div-empty')}).classList.contains('luna-dom-viewer-selected')`), true, '首次点击保留节点选中反馈');
+          await sleep(600);
+        }
       }
       await waitFor(`!${editor}.hidden`);
       assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-edit-node').textContent`), '<div#div-empty>', '实际点击空 div 可重复打开编辑器');
       assert.equal(await evaluate(`${root}.activeElement === ${editor}.querySelector('textarea')`), true, '编辑器获得输入焦点');
       await cancelEdit();
     }
+    // 不相关的点击不能凑成两次，工具栏仍可直接编辑当前选择。
+    const selectOnly = async (expression) => {
+      await evaluate(`(${expression}).click()`);
+      assert.equal(await evaluate(`${editor}.hidden`), true, '切换编辑位置只选中');
+    };
+    await selectOnly(rowById('div-empty'));
+    await selectOnly(rowById('div-nested'));
+    await selectOnly(rowById('div-empty'));
+    await evaluate(`${root}.querySelector('.eruda-dom-edit-trigger').click()`);
+    assert.equal(await evaluate(`${editor}.hidden`), false, '工具栏编辑按钮单击打开');
+    assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-edit-node').textContent`), '<div#div-empty>');
+    await cancelEdit();
+    await selectOnly(rowById('div-empty'));
+    await clickTab('console');
+    await clickTab('elements');
+    await openRow(rowById('div-empty'), 'div-empty');
+    await cancelEdit();
+    await selectOnly(rowById('div-parent'));
+    await evaluate(`(${rowById('div-parent')}).querySelector('.luna-dom-viewer-toggle').click()`);
+    await openRow(rowById('div-parent'), 'div-parent');
+    await cancelEdit();
+    await expandRow(rowById('div-parent'));
     await expandRow(rowById('div-nested'));
     const anonymousRow = `(${rowById('div-nested')}).nextElementSibling.querySelector('.luna-dom-viewer-tree-item')`;
     await openRow(anonymousRow, '');
@@ -356,8 +390,12 @@ try {
     await editValue('Shadow DOM 修改成功');
     await applyEdit();
     assert.equal(await evaluate(`document.querySelector('#div-shadow').shadowRoot.querySelector('div').textContent`), 'Shadow DOM 修改成功');
+    await selectOnly(`(${targetRow}).querySelector('.luna-dom-viewer-tag-name')`);
+    await selectOnly(`(${targetRow}).querySelector('.luna-dom-viewer-attribute-name')`);
+    await selectOnly(`(${targetRow}).querySelector('.luna-dom-viewer-tag-name')`);
     await clickAttribute('data-note');
-    assert.equal(await evaluate(`${editor}.hidden`), false, '点击属性直接打开编辑器');
+    assert.equal(await evaluate(`${editor}.hidden`), false, '点击属性两次打开编辑器');
+    assert.equal(await evaluate(`${editor}.querySelector('input').value`), 'data-note', '切换属性后编辑新选中的属性');
     await editValue('after');
     await applyEdit();
     assert.equal(await evaluate(`document.querySelector('#dom-edit-target').getAttribute('data-note')`), 'after');
@@ -376,12 +414,12 @@ try {
     assert.equal(await evaluate(`document.querySelector('#dom-edit-target').hasAttribute('data-state')`), false);
     await evaluate(`(${targetRow}).querySelector('.luna-dom-viewer-toggle').click()`);
     await waitFor(`Array.from(${row}).some(el => el.querySelector('.luna-dom-viewer-text-node')?.textContent === '原始文字')`);
-    await evaluate(`Array.from(${row}).find(el => el.querySelector('.luna-dom-viewer-text-node')?.textContent === '原始文字').querySelector('.luna-dom-viewer-text-node').click()`);
+    await openEditor(`Array.from(${row}).find(el => el.querySelector('.luna-dom-viewer-text-node')?.textContent === '原始文字').querySelector('.luna-dom-viewer-text-node')`);
     await editValue('编辑后的文字 <不是HTML>');
     await applyEdit();
     assert.equal(await evaluate(`document.querySelector('#dom-edit-target').textContent`), '编辑后的文字 <不是HTML>');
     assert.equal(await evaluate(`document.querySelector('#dom-edit-target').children.length`), 0);
-    await evaluate(`(${targetRow}).querySelector('.luna-dom-viewer-tag-name').click()`);
+    await openEditor(`(${targetRow}).querySelector('.luna-dom-viewer-tag-name')`);
     assert.equal(await evaluate(`${editor}.querySelector('[data-mode="html"]').getAttribute('aria-pressed')`), 'true');
     const syntaxSource = '<div title="属性 > 中文 &amp;">\n<!-- 注释 -->\n<img src="https://offline-probe.invalid/highlight.png" onerror="window.highlightExecuted=true">\n&lt;文字&gt;\n</div>\n';
     await editValue(syntaxSource);
@@ -424,19 +462,19 @@ try {
     assert.equal(await evaluate(`document.querySelector('#dom-edit-target').tagName`), 'ARTICLE');
     assert.equal(await evaluate(`document.querySelector('#dom-edit-target strong').textContent`), '修改结构成功');
     await waitFor(`(${targetRow}).textContent.includes('article')`);
-    await evaluate(`(${targetRow}).querySelector('.luna-dom-viewer-tag-name').click()`);
+    await openEditor(`(${targetRow}).querySelector('.luna-dom-viewer-tag-name')`);
     await editValue('<img src="https://offline-probe.invalid/editor-preview.png"><b>无效的多根节点</b>');
     await applyEdit();
     assert.match(await evaluate(`${editor}.querySelector('[role="alert"]').textContent`), /一个完整/);
     await cancelEdit();
     assert.equal(await evaluate(`document.querySelector('#dom-edit-target').tagName`), 'ARTICLE', '取消和无效输入不修改页面');
-    await evaluate(`(${targetRow}).querySelector('.luna-dom-viewer-tag-name').click()`);
+    await openEditor(`(${targetRow}).querySelector('.luna-dom-viewer-tag-name')`);
     await evaluate(`document.querySelector('#dom-edit-target').setAttribute('data-external', 'updated')`);
     await editValue('<p id="dom-edit-target">过期编辑</p>');
     await applyEdit();
     assert.match(await evaluate(`${editor}.querySelector('[role="alert"]').textContent`), /页面已更新/);
     await cancelEdit();
-    await checkElements({ evaluate, waitFor, editor, rowById, expandRow, editValue, applyEdit, cancelEdit,
+    await checkElements({ evaluate, waitFor, editor, rowById, expandRow, openEditor, editValue, applyEdit, cancelEdit,
       screenshot: async (name) => {
         if (!['desktop', 'legacy'].includes(mode)) return;
         await mkdir(path('output/playwright'), { recursive: true });
