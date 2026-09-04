@@ -117,7 +117,7 @@ try {
     await cdp('Emulation.setTouchEmulationEnabled', { enabled: mode !== 'desktop' });
     let adapter = '';
     if (mode === 'modern') adapter = `
-      window.GM = Object.fromEntries(['getValue', 'setValue', 'registerMenuCommand'].map(name => {
+      window.GM = Object.fromEntries(['getValue', 'setValue', 'registerMenuCommand', 'unregisterMenuCommand'].map(name => {
         const fn = window['GM_' + name]; delete window['GM_' + name];
         return [name, async (...args) => fn(...args)];
       }));`;
@@ -168,7 +168,8 @@ try {
     assert.equal(await evaluate('window.fixtureMenus.size'), 5);
     await evaluate('window.fixtureCapturedConsole = console.log');
     assert.equal(await evaluate(entryDisplay), 'none');
-    await menu('打开 / 关闭');
+    await menu('打开调试面板');
+    assert.equal(await evaluate(`window.fixtureMenus.has('Eruda：关闭调试面板')`), true);
     await waitFor(`${root}.textContent.includes('body 阶段执行')`);
     await evaluate(`console.log('OFFLINE_PAGE_LOG', { answer: 42 }); fetch('data:application/json,%7B%22ok%22%3Atrue%7D').then(r => r.json())`);
     await waitFor(`${root}.textContent.includes('OFFLINE_PAGE_LOG')`);
@@ -365,7 +366,7 @@ try {
       await sleep(100);
     }
     assert.deepEqual(requests.slice(requestStart).filter((url) => !/^(data|blob):/.test(url)), [], '工具切换不得加载任何外部资源');
-    await menu('显示 / 隐藏');
+    await menu('显示悬浮球');
     assert.notEqual(await evaluate(entryDisplay), 'none');
     await assertEntryCentered();
     const entryPoint = await evaluate(`(() => {
@@ -375,21 +376,22 @@ try {
     await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [entryPoint] });
     await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await waitFor(`document.querySelector('#eruda-offline-panel').dataset.panelOpen === 'false'`);
-    await menu('打开 / 关闭');
+    await waitFor(`window.fixtureMenus.has('Eruda：打开调试面板')`);
+    await menu('打开调试面板');
     assert.equal(await evaluate(`document.querySelector('#eruda-offline-panel').dataset.panelOpen`), 'true', '单菜单跟随原生浮球的实际开关状态');
-    await menu('显示 / 隐藏');
+    await menu('隐藏悬浮球');
     assert.equal(await evaluate(entryDisplay), 'none');
-    await menu('显示 / 隐藏');
+    await menu('显示悬浮球');
     await assertEntryCentered();
-    await menu('显示 / 隐藏');
+    await menu('隐藏悬浮球');
     assert.equal(await evaluate(entryDisplay), 'none', '居中修复不影响隐藏悬浮球');
-    await menu('打开 / 关闭');
+    await menu('关闭调试面板');
     assert.notEqual(await evaluate('console.log === window.fixtureOriginalConsole'), true, '隐藏面板仍采集日志');
     await menu('停止本页');
     assert.equal(await evaluate(`!!document.querySelector('#eruda-offline-panel')`), false);
     assert.equal(await evaluate('console.log === window.fixtureCapturedConsole'), false, '停止后移除 console 采集包装');
     assert.equal(await evaluate('window.fetch === window.fixtureOriginalFetch'), true, '停止后恢复 fetch');
-    await menu('打开 / 关闭');
+    await menu('打开调试面板');
     await waitFor(`!!document.querySelector('#eruda-offline-panel')`);
     await evaluate(`console.log('重新启动成功')`);
     await waitFor(`${root}.textContent.includes('重新启动成功')`);
@@ -401,7 +403,15 @@ try {
       const screenshot = await cdp('Page.captureScreenshot', { format: 'png' });
       await writeFile(path('output/playwright/offline-mobile.png'), Buffer.from(screenshot.data, 'base64'));
     }
-    await menu('显示 / 隐藏');
+    await menu('关闭自动采集');
+    assert.equal(await evaluate(`window.fixtureMenus.has('Eruda：开启自动采集（下次加载生效）')`), true);
+    await menu('开启自动采集');
+    assert.deepEqual(await evaluate('window.fixtureAlerts'), [
+      '[Eruda 离线调试]\n自动采集已关闭，下次加载页面生效。',
+      '[Eruda 离线调试]\n自动采集已开启，下次加载页面生效。',
+    ]);
+    assert.equal(await evaluate('window.fixtureMenus.size'), 5, '反复更新后菜单数量不变');
+    await menu('显示悬浮球');
     assert.notEqual(await evaluate(entryDisplay), 'none', '刷新前悬浮球已显示');
     assert.equal(await evaluate(`JSON.parse(localStorage.getItem('fixture:eruda-offline:preferences:v1')).hideEntry`), false, '刷新前偏好已写入存储');
     // Page.navigate 返回时旧文档仍可能可见，不能只用 readyState 判断刷新完成。

@@ -7,6 +7,8 @@ const source = await readFile(new URL('../src/userscript.js', import.meta.url), 
 
 async function harness({ mode = 'legacy', saved = {}, frame = false, storageFails = false } = {}) {
   const menus = new Map();
+  const menuIds = new Map();
+  let nextMenuId = 0;
   const actions = [];
   const alerts = [];
   const saves = [];
@@ -33,7 +35,7 @@ async function harness({ mode = 'legacy', saved = {}, frame = false, storageFail
     document: { head: {}, documentElement: {}, getElementById: () => connected ? bridge : null },
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
     alert: (message) => alerts.push(message),
-    mockPage(options) { connected = true; statusEvent = `${options.channel}:status`; },
+    mockPage(options) { connected = true; state.hiddenEntry = options.hideEntry; statusEvent = `${options.channel}:status`; },
   };
   sandbox.window = sandbox;
   sandbox.self = sandbox;
@@ -45,7 +47,13 @@ async function harness({ mode = 'legacy', saved = {}, frame = false, storageFail
       if (storageFails) throw new Error('存储被禁用');
       saves.push({ key, value });
     },
-    registerMenuCommand: (label, callback) => { menus.set(label, callback); return menus.size; },
+    registerMenuCommand: (label, callback) => {
+      const id = nextMenuId++;
+      menuIds.set(id, label);
+      menus.set(label, callback);
+      return id;
+    },
+    unregisterMenuCommand: (id) => { menus.delete(menuIds.get(id)); menuIds.delete(id); },
   };
   if (mode === 'legacy') {
     for (const [name, fn] of Object.entries(api)) sandbox[`GM_${name}`] = fn;
@@ -60,7 +68,12 @@ async function harness({ mode = 'legacy', saved = {}, frame = false, storageFail
     assert.ok(entry, `菜单应存在：${contains}`);
     await entry[1]();
   };
-  return { menus, actions, alerts, saves, state, click };
+  const report = async (changes) => {
+    Object.assign(state, changes);
+    listeners.get(statusEvent)?.({ detail: JSON.stringify(state) });
+    await new Promise(setImmediate);
+  };
+  return { menus, actions, alerts, saves, state, click, report };
 }
 
 for (const mode of ['legacy', 'modern']) {
@@ -68,33 +81,65 @@ for (const mode of ['legacy', 'modern']) {
     const h = await harness({ mode });
     assert.equal(h.menus.size, 5);
     assert.equal(h.state.initialized, true);
-    await h.click('打开 / 关闭');
+    await h.click('打开调试面板');
     assert.equal(h.state.visible, true);
-    await h.click('打开 / 关闭');
+    await h.click('关闭调试面板');
     assert.equal(h.state.visible, false);
     assert.equal(h.state.initialized, true);
-    await h.click('显示 / 隐藏');
+    await h.click('显示悬浮球');
     assert.equal(h.state.hiddenEntry, false);
     assert.equal(h.saves.at(-1).value.hideEntry, false);
+    await h.click('隐藏悬浮球');
+    assert.equal(h.state.hiddenEntry, true);
+    await h.click('显示悬浮球');
     await h.click('停止本页');
     assert.equal(h.state.initialized, false);
-    await h.click('打开 / 关闭');
+    assert.ok(h.menus.has('Eruda：显示悬浮球'));
+    await h.click('打开调试面板');
     assert.equal(h.state.initialized, true);
-    await h.click('切换自动采集');
+    await h.click('关闭自动采集');
     assert.equal(h.saves.at(-1).value.autoStart, false);
+    await h.click('开启自动采集');
+    assert.equal(h.saves.at(-1).value.autoStart, true);
+    assert.equal(h.menus.size, 5, '状态更新后不留下重复菜单');
+  });
+
+  test(`${mode} GM API：原生面板事件更新菜单，重复状态不重新注册`, async () => {
+    const h = await harness({ mode });
+    await h.report({ visible: true });
+    assert.ok(h.menus.has('Eruda：关闭调试面板'));
+    assert.equal(h.menus.has('Eruda：打开调试面板'), false);
+    const callback = h.menus.get('Eruda：关闭调试面板');
+    await h.report({ visible: true });
+    assert.equal(h.menus.get('Eruda：关闭调试面板'), callback);
+    await h.report({ visible: false });
+    assert.ok(h.menus.has('Eruda：打开调试面板'));
+    assert.equal(h.menus.size, 5);
+  });
+
+  test(`${mode} GM API：停止后可通过显示悬浮球重新启动`, async () => {
+    const h = await harness({ mode, saved: { hideEntry: false } });
+    await h.click('隐藏悬浮球');
+    await h.click('显示悬浮球');
+    await h.click('停止本页');
+    await h.click('显示悬浮球');
+    assert.equal(h.state.initialized, true);
+    assert.equal(h.state.hiddenEntry, false);
+    assert.ok(h.menus.has('Eruda：隐藏悬浮球'));
   });
 }
 
 test('关闭自动采集时保持惰性，仍可手动打开', async () => {
   const h = await harness({ saved: { autoStart: false, hideEntry: true } });
   assert.equal(h.actions.length, 0);
-  await h.click('打开 / 关闭');
+  assert.ok(h.menus.has('Eruda：开启自动采集（下次加载生效）'));
+  await h.click('打开调试面板');
   assert.equal(h.state.visible, true);
 });
 
 test('存储失败时菜单操作继续执行并说明仅本页生效', async () => {
   const h = await harness({ storageFails: true });
-  await h.click('显示 / 隐藏');
+  await h.click('显示悬浮球');
   assert.equal(h.state.hiddenEntry, false);
   assert.match(h.alerts[0], /仅在本页有效/);
 });

@@ -12,6 +12,9 @@
   let ready;
   let queue = Promise.resolve();
   let storageWarning = '';
+  let menus = [];
+  let registeredMenus = [];
+  let menuQueue = Promise.resolve();
 
   function api(legacy, modern) {
     if (typeof legacy === 'function') return legacy;
@@ -22,6 +25,7 @@
   const getValue = api(typeof GM_getValue === 'function' ? GM_getValue : null, 'getValue');
   const setValue = api(typeof GM_setValue === 'function' ? GM_setValue : null, 'setValue');
   const registerMenu = api(typeof GM_registerMenuCommand === 'function' ? GM_registerMenuCommand : null, 'registerMenuCommand');
+  const unregisterMenu = api(typeof GM_unregisterMenuCommand === 'function' ? GM_unregisterMenuCommand : null, 'unregisterMenuCommand');
   const addElement = api(typeof GM_addElement === 'function' ? GM_addElement : null, 'addElement');
 
   function notify(message) { window.alert(`[Eruda 离线调试]\n${message}`); }
@@ -80,6 +84,7 @@
     }
     bridge.addEventListener(`${channel}:status`, (event) => {
       try { status = JSON.parse(event.detail); } catch { /* 忽略不符合协议的页面事件。 */ }
+      refreshMenus();
     });
     send('status');
   }
@@ -105,8 +110,35 @@
     queue = queue.then(action).catch((error) => {
       console.error('[Eruda 离线调试]', error);
       notify(error.message || String(error));
-    });
+    }).then(() => refreshMenus());
     return queue;
+  }
+
+  function refreshMenus() {
+    // 菜单 API 可能异步完成，串行更新以免页面事件与菜单操作留下重复项。
+    menuQueue = menuQueue.then(async () => {
+      if (!registerMenu) return 0;
+      const labels = menus.map(([label]) => label());
+      if (registeredMenus.length === labels.length &&
+        registeredMenus.every((menu, index) => menu.label === labels[index])) return registeredMenus.length;
+      // 不支持注销的管理器保留已有入口，避免每次状态变化都累积菜单。
+      if (registeredMenus.length && !unregisterMenu) return registeredMenus.length;
+      while (registeredMenus.length) {
+        await unregisterMenu(registeredMenus[0].id);
+        registeredMenus.shift();
+      }
+      for (const [index, [, action]] of menus.entries()) {
+        try {
+          const id = await registerMenu(labels[index], () => run(action));
+          registeredMenus.push({ id, label: labels[index] });
+        } catch (error) { console.warn('[Eruda 离线调试] 无法注册菜单：', error); }
+      }
+      return registeredMenus.length;
+    }).catch((error) => {
+      console.warn('[Eruda 离线调试] 无法更新菜单：', error);
+      return registeredMenus.length;
+    });
+    return menuQueue;
   }
 
   async function main() {
@@ -117,32 +149,26 @@
       }
     } catch (error) { storageWarning = `无法读取设置：${error.message}`; }
 
-    const menus = [
-      ['Eruda：打开 / 关闭调试面板', () => command('toggle')],
-      ['Eruda：显示 / 隐藏悬浮球', async () => {
-        preferences.hideEntry = !preferences.hideEntry;
+    menus = [
+      [() => `Eruda：${status.visible ? '关闭' : '打开'}调试面板`, () => command('toggle')],
+      [() => `Eruda：${status.initialized && !status.hiddenEntry ? '隐藏' : '显示'}悬浮球`, async () => {
+        preferences.hideEntry = status.initialized && !status.hiddenEntry;
         await save();
         await command('entry', { hidden: preferences.hideEntry });
         if (!preferences.hideEntry) await command('start');
       }],
-      ['Eruda：切换自动采集（下次加载生效）', async () => {
+      [() => `Eruda：${preferences.autoStart ? '关闭' : '开启'}自动采集（下次加载生效）`, async () => {
         preferences.autoStart = !preferences.autoStart;
         await save();
         notify(`自动采集已${preferences.autoStart ? '开启' : '关闭'}，下次加载页面生效。`);
       }],
-      ['Eruda：停止本页调试并释放资源', () => command('stop')],
-      ['Eruda：查看状态与版本', async () => {
+      [() => 'Eruda：停止本页调试并释放资源', () => command('stop')],
+      [() => 'Eruda：查看状态与版本', async () => {
         if (bridge) await command('status');
         notify(`脚本 ${VERSION}\nEruda ${ERUDA_VERSION}\n采集：${status.initialized ? '运行中' : '已停止'}\n面板：${status.visible ? '打开' : '关闭'}\n悬浮球：${preferences.hideEntry ? '隐藏' : '显示'}\n自动采集：${preferences.autoStart ? '开启' : '关闭'}${storageWarning ? `\n${storageWarning}` : ''}`);
       }],
     ];
-    let menuCount = 0;
-    if (registerMenu) {
-      for (const [label, action] of menus) {
-        try { await registerMenu(label, () => run(action)); menuCount++; }
-        catch (error) { console.warn('[Eruda 离线调试] 无法注册菜单：', error); }
-      }
-    }
+    const menuCount = await refreshMenus();
     // 缺少菜单 API 时保留可触达的入口，防止默认隐藏导致无法打开面板。
     if (!menuCount) preferences.hideEntry = false;
     if (preferences.autoStart || !menuCount) {
@@ -153,6 +179,7 @@
         console.error('[Eruda 离线调试]', error);
       }
     }
+    await refreshMenus();
   }
 
   queue = main().catch((error) => console.error('[Eruda 离线调试]', error));

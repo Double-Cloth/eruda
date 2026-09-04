@@ -22,6 +22,8 @@ test('同一输入离线构建可复现，并包含完整源码、许可证及�
     assert.match(source, /Copyright \(c\) 2016-present liriliri/);
     assert.match(source, /@downloadURL\s+https:\/\/github.com\/example\/mobile-debug\/releases\/latest\/download\/eruda-offline.user.js/);
     assert.match(source, /@version\s+\d+\.\d+\.\d+\.\d+\.\d+\.\d+/);
+    assert.match(source, /@grant\s+GM_unregisterMenuCommand/);
+    assert.match(source, /@grant\s+GM\.unregisterMenuCommand/);
     assert.doesNotMatch(source, /^\/\/\s*@(require|resource)\s/m);
     assert.equal(/^\/\/[#@] sourceMappingURL=/m.test(source), false);
     assert.doesNotMatch(source, /ERUDA_VENDOR|ELEMENTS_EDITOR|PAGE_MAIN|__SCRIPT_VERSION__|__ERUDA_VERSION__/);
