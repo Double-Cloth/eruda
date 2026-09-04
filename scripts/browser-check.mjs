@@ -546,6 +546,17 @@ try {
     }
     await cdp('Page.navigate', { url });
     await waitFor(`window.fixturePreviousDocument !== true && document.readyState === 'complete' && !!document.querySelector('#eruda-offline-panel')?.shadowRoot`);
+    // 文档加载完成不代表异步 GM 菜单与悬浮球状态已恢复；等待实际状态，仍在超时后报错。
+    assert.equal(await evaluate(`JSON.parse(localStorage.getItem('fixture:eruda-offline:preferences:v1')).hideEntry`), false, '刷新后显示偏好仍保存在存储中');
+    try {
+      await waitFor(`window.fixtureMenus.size === 5 && window.fixtureMenus.has('Eruda：隐藏悬浮球') && ${entryDisplay} !== 'none'`);
+    } catch (error) {
+      const state = await evaluate(`({ url: location.href, ready: document.readyState,
+        preferences: localStorage.getItem('fixture:eruda-offline:preferences:v1'),
+        menus: [...window.fixtureMenus.keys()], entry: ${root}.querySelector('.eruda-entry-btn').outerHTML,
+        display: ${entryDisplay}, alerts: window.fixtureAlerts })`);
+      throw new Error(`${mode}：刷新后悬浮球状态未恢复：${JSON.stringify(state)}`, { cause: error });
+    }
     assert.notEqual(await evaluate(entryDisplay), 'none', '刷新后保留悬浮球偏好');
     await assertEntryCentered();
     await send('Target.disposeBrowserContext', { browserContextId });
