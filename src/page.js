@@ -74,6 +74,11 @@ function pageMain(options) {
 
   function configureOfflineTools() {
     const consoleTool = eruda.get('console');
+    // 上游高亮监听 optionChange，但内嵌日志组件发送 changeOption；衔接级别变化以复用原有高亮逻辑。
+    const logger = consoleTool._logger;
+    logger.on('changeOption', (name, value, previous) => {
+      if (name === 'level') logger.emit('optionChange', name, value, previous);
+    });
     const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     })[char]);

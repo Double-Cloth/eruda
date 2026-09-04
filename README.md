@@ -100,6 +100,8 @@ npm run test:browser
 
 字体回归额外使用带 `font-src 'none'` 响应头的本地 HTTP 页面，检查悬浮球和清空按钮确实使用内嵌字体绘制、清空日志功能及字体释放和重新注册。
 
+Console 回归通过桌面鼠标和手机触摸反复切换 All、Info、Warning、Error，检查日志筛选、唯一高亮及实际高亮颜色，并验证停止调试后重开仍然正常。
+
 浏览器路径依次读取 `CHROME_PATH`、`CHROME_BIN`，然后查找本机安装；需要时手动指定：
 
 ```powershell

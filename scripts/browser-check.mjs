@@ -156,6 +156,44 @@ try {
     await waitFor(`document.readyState === 'complete' && !!document.querySelector('#eruda-offline-panel')?.shadowRoot`);
     assert.deepEqual(requests.slice(startupStart).filter((request) => request !== url && !request.endsWith('/favicon.ico') && !/^(data|blob):/.test(request)), [], '启动仅加载测试页面和内嵌资源');
     const root = `document.querySelector('#eruda-offline-panel').shadowRoot`;
+    const checkConsoleLevels = async () => {
+      const control = `${root}.querySelector('.eruda-console .eruda-control')`;
+      const logs = `${root}.querySelector('.eruda-console .eruda-logs-container')`;
+      const levels = ['info', 'warning', 'error', 'all'];
+      await evaluate(`${control}.querySelector('.eruda-clear-console').click();
+        console.log('LEVEL_LOG'); console.info('LEVEL_INFO');
+        console.warn('LEVEL_WARNING'); console.error('LEVEL_ERROR');`);
+      await waitFor(`${logs}.textContent.includes('LEVEL_ERROR')`);
+      for (const level of [...levels, ...levels]) {
+        const button = `${control}.querySelector('[data-level="${level}"]')`;
+        const point = await evaluate(`(() => {
+          const rect = ${button}.getBoundingClientRect();
+          return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+        })()`);
+        if (mode === 'desktop') {
+          await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
+          await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+        } else {
+          await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+          await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        }
+        const expected = level === 'all' ? ['LEVEL_ERROR', 'LEVEL_INFO', 'LEVEL_LOG', 'LEVEL_WARNING']
+          : level === 'info' ? ['LEVEL_INFO', 'LEVEL_LOG'] : [`LEVEL_${level.toUpperCase()}`];
+        await waitFor(`JSON.stringify((${logs}.textContent.match(/LEVEL_[A-Z]+/g) || []).sort()) === ${JSON.stringify(JSON.stringify(expected))}`);
+        assert.deepEqual(await evaluate(`Array.from(${control}.querySelectorAll('.eruda-level.eruda-active'), el => el.dataset.level)`),
+          [level], `${mode}：筛选 ${level} 后只能高亮对应按钮`);
+        await evaluate(`Promise.all(${control}.getAnimations({ subtree: true }).map(animation => animation.finished))`);
+        assert.notEqual(await evaluate(`getComputedStyle(${button}).backgroundColor`),
+          await evaluate(`getComputedStyle(${control}.querySelector('.eruda-level:not(.eruda-active)')).backgroundColor`),
+          '选中按钮应实际显示不同的高亮背景');
+        if (level === 'info' && ['desktop', 'legacy'].includes(mode)) {
+          await mkdir(path('output/playwright'), { recursive: true });
+          const screenshot = await cdp('Page.captureScreenshot', { format: 'png' });
+          await writeFile(path(`output/playwright/console-filter-${mode}.png`), Buffer.from(screenshot.data, 'base64'));
+        }
+      }
+      await evaluate(`${control}.querySelector('.eruda-clear-console').click()`);
+    };
     assert.equal(await evaluate('window.eruda.sentinel'), true, '保留页面已有 Eruda');
     const entryDisplay = `getComputedStyle(${root}.querySelector('.eruda-entry-btn')).display`;
     const assertIconFont = async (selector) => {
@@ -207,6 +245,7 @@ try {
     await waitFor(`${root}.textContent.includes('ICON_CLEAR_PROBE')`);
     await evaluate(`${root}.querySelector('.eruda-clear-console').click()`);
     await waitFor(`!${root}.textContent.includes('ICON_CLEAR_PROBE')`);
+    await checkConsoleLevels();
     if (mode === 'csp') {
       await menu('显示悬浮球');
       await assertEntryCentered();
@@ -445,6 +484,7 @@ try {
     await sleep(400);
     assert.equal(await evaluate(`getComputedStyle(${root}.querySelector('.eruda-dev-tools')).display`), 'block', '快速重开后保持可见');
     assert.equal(await evaluate(`getComputedStyle(${root}.querySelector('.eruda-dev-tools')).opacity`), '1');
+    await checkConsoleLevels();
     if (mode === 'legacy') {
       await mkdir(path('output/playwright'), { recursive: true });
       const screenshot = await cdp('Page.captureScreenshot', { format: 'png' });
