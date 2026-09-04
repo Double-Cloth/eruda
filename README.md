@@ -102,6 +102,8 @@ $env:CHROME_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 npm run test:browser
 ```
 
+浏览器路径优先读取 `CHROME_PATH`，其次读取 Actions 镜像提供的 `CHROME_BIN`，最后查找本机安装。启动最多等待 30 秒；进程启动失败或提前退出时立即报告路径、退出码和 Chrome 错误输出，不再只显示端口超时。日志也会记录调试连接的启动耗时。刷新验证等待新文档完成加载，避免在较慢的 CI 环境中误读旧页面状态。
+
 浏览器验证使用 390 × 844 手机视口及触摸模拟、1280 × 844 桌面视口及鼠标输入，覆盖同步 GM、异步 GM、脚本注入回退、无菜单入口、日志 / 请求采集、日志样式和 HTML 占位符的外部资源检查、断网切换全部面板、DOM 属性 / 文本 / HTML 编辑及过期内容检查、空 div / 嵌套 div / 无属性节点 / 结束标签 / Shadow DOM 点击、动态替换选中节点、单菜单开关、浮球开关、停止后重开。GM API 由测试夹具模拟；不等同于已在每一种手机浏览器和脚本管理器上实机测试。截图写入 `output/playwright/`。
 
 ## GitHub 自动更新与发布

@@ -10,6 +10,7 @@ import { path } from './lib.mjs';
 // 使用 Node 内置 WebSocket 和 Chrome DevTools Protocol，不增加 npm 依赖。
 function findChrome() {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  if (process.env.CHROME_BIN) return process.env.CHROME_BIN;
   if (process.platform === 'win32') {
     for (const base of [process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA].filter(Boolean)) {
       for (const app of ['Google/Chrome/Application/chrome.exe', 'Microsoft/Edge/Application/msedge.exe']) {
@@ -30,29 +31,49 @@ function findChrome() {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const profile = await mkdtemp(join(tmpdir(), 'eruda-browser-'));
-const browser = spawn(findChrome(), [
+const executable = findChrome();
+const launchStarted = Date.now();
+console.log(`启动浏览器：${executable}（${process.platform}）`);
+const browser = spawn(executable, [
   '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
   '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
   '--disable-extensions', 'about:blank',
-], { stdio: 'ignore', windowsHide: true });
+], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
 let launchError;
+let browserClosed = false;
+let browserStderr = '';
 browser.on('error', (error) => { launchError = error; });
+browser.stderr.setEncoding('utf8');
+browser.stderr.on('data', (data) => { browserStderr = (browserStderr + data).slice(-16_384); });
+browser.on('close', () => { browserClosed = true; });
+function startupFailure(reason) {
+  return new Error(`${reason}\n浏览器：${executable}\n退出码：${browser.exitCode}，信号：${browser.signalCode}\n${browserStderr.trim() || '浏览器没有输出错误日志。'}`);
+}
 let socket;
 
 try {
   let portInfo;
-  for (let i = 0; i < 150; i++) {
-    if (launchError) throw launchError;
-    try { portInfo = await readFile(join(profile, 'DevToolsActivePort'), 'utf8'); break; }
-    catch { await sleep(100); }
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (launchError) throw startupFailure(`浏览器启动失败：${launchError.message}`);
+    if (browserClosed) throw startupFailure('浏览器在开放调试端口前提前退出。');
+    try {
+      const candidate = await readFile(join(profile, 'DevToolsActivePort'), 'utf8');
+      // 文件可能仍在写入，等到端口和 WebSocket 路径完整后再连接。
+      if (/^\d+\r?\n\/devtools\/browser\/[^\s]+\s*$/.test(candidate)) { portInfo = candidate; break; }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw startupFailure(`无法读取调试端口：${error.message}`);
+    }
+    await sleep(100);
   }
-  if (!portInfo) throw new Error('浏览器启动超时。');
+  if (!portInfo) throw startupFailure('浏览器启动超时（30 秒）。');
   const [port, endpoint] = portInfo.trim().split(/\r?\n/);
   socket = new WebSocket(`ws://127.0.0.1:${port}${endpoint}`);
   await new Promise((resolve, reject) => {
     socket.addEventListener('open', resolve, { once: true });
     socket.addEventListener('error', reject, { once: true });
   });
+  console.log(`浏览器调试连接已就绪（${Date.now() - launchStarted} ms）`);
   let id = 0;
   const pending = new Map();
   const requests = [];
@@ -372,8 +393,12 @@ try {
       await writeFile(path('output/playwright/offline-mobile.png'), Buffer.from(screenshot.data, 'base64'));
     }
     await menu('显示 / 隐藏');
+    assert.notEqual(await evaluate(entryDisplay), 'none', '刷新前悬浮球已显示');
+    assert.equal(await evaluate(`JSON.parse(localStorage.getItem('fixture:eruda-offline:preferences:v1')).hideEntry`), false, '刷新前偏好已写入存储');
+    // Page.navigate 返回时旧文档仍可能可见，不能只用 readyState 判断刷新完成。
+    await evaluate('window.fixturePreviousDocument = true');
     await cdp('Page.navigate', { url });
-    await waitFor(`document.readyState === 'complete' && !!document.querySelector('#eruda-offline-panel')?.shadowRoot`);
+    await waitFor(`window.fixturePreviousDocument !== true && document.readyState === 'complete' && !!document.querySelector('#eruda-offline-panel')?.shadowRoot`);
     assert.notEqual(await evaluate(entryDisplay), 'none', '刷新后保留悬浮球偏好');
     await assertEntryCentered();
     await send('Target.disposeBrowserContext', { browserContextId });
