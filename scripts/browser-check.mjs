@@ -475,6 +475,19 @@ try {
     assert.match(await evaluate(`${editor}.querySelector('[role="alert"]').textContent`), /页面已更新/);
     await cancelEdit();
     await checkElements({ evaluate, waitFor, editor, rowById, expandRow, openEditor, editValue, applyEdit, cancelEdit,
+      realClick: async (expression) => {
+        const point = await evaluate(`(() => {
+          const rect = (${expression}).getBoundingClientRect();
+          return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+        })()`);
+        if (mode === 'desktop') {
+          await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
+          await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+        } else {
+          await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+          await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        }
+      },
       screenshot: async (name) => {
         if (!['desktop', 'legacy'].includes(mode)) return;
         await mkdir(path('output/playwright'), { recursive: true });

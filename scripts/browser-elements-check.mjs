@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 
 // 与完整离线验证共用浏览器、断网状态和 UI 入口，验证节点身份而不只比较 HTML。
-export async function checkElements({ evaluate, waitFor, editor, rowById, expandRow, openEditor, editValue, applyEdit, cancelEdit, screenshot }) {
+export async function checkElements({ evaluate, waitFor, editor, rowById, expandRow, openEditor, editValue, applyEdit, cancelEdit, realClick, screenshot }) {
   const openElement = async (id) => {
     const ancestors = await evaluate(`(() => {
       const ids = []; let node = document.getElementById(${JSON.stringify(id)}).parentElement;
@@ -24,7 +24,8 @@ export async function checkElements({ evaluate, waitFor, editor, rowById, expand
   const openInsert = async (id) => {
     await openElement(id);
     await cancelEdit();
-    await evaluate(`${editor}.parentElement.querySelector('.eruda-dom-insert-trigger').click()`);
+    await screenshot('elements-toolbar');
+    await realClick(`${editor}.parentElement.querySelector('.eruda-dom-insert-trigger')`);
     assert.equal(await evaluate(`${editor}.hidden`), false, '工具栏插入按钮单击打开');
     assert.equal(await evaluate(`${editor}.getAttribute('aria-label')`), '插入 DOM');
   };

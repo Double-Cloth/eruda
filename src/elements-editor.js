@@ -19,7 +19,8 @@ function installElementsEditor(eruda, container) {
   let disposed = false;
   const style = document.createElement('style');
   style.textContent = `
-    .eruda-dom-action-trigger { float:right; padding:0 12px; cursor:pointer; font:inherit; color:inherit; background:transparent; border:0; height:30px; }
+    .eruda-dom-actions { float:right; display:flex; width:auto !important; height:30px; margin-right:72px; position:relative; z-index:1; }
+    .eruda-dom-action-trigger { flex:0 0 auto; width:auto !important; min-width:40px; height:30px; padding:0 8px; box-sizing:border-box; cursor:pointer; font:12px/30px system-ui,sans-serif; white-space:nowrap; color:inherit; background:transparent; border:0; }
     .eruda-dom-editor[hidden] { display:none !important; }
     .eruda-dom-editor { position:absolute; inset:0; z-index:10; display:flex; flex-direction:column; gap:10px; padding:12px; box-sizing:border-box; background:#fff; color:#222; font:14px/1.5 system-ui,sans-serif; overflow:hidden; }
     .eruda-dom-editor[data-theme="dark"] { background:#202124; color:#e8eaed; color-scheme:dark; }
@@ -56,15 +57,21 @@ function installElementsEditor(eruda, container) {
     .eruda-dom-editor .eruda-dom-edit-hint { font-size:12px; opacity:.8; }
     .eruda-dom-editor [role="alert"] { color:#d93025; overflow-wrap:anywhere; }
   `.replaceAll('.eruda-dom-editor', '.eruda-container .eruda-dom-editor')
+    .replaceAll('.eruda-dom-actions', '.eruda-container .eruda-dom-actions')
     .replaceAll('.eruda-dom-action-trigger', '.eruda-container .eruda-dom-action-trigger');
   root.appendChild(style);
+  const actions = document.createElement('div');
+  actions.className = 'eruda-dom-actions';
+  actions.setAttribute('role', 'group');
+  actions.setAttribute('aria-label', 'DOM 操作');
+  controls.appendChild(actions);
   function createTrigger(text, title, action) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `eruda-dom-action-trigger eruda-dom-${action}-trigger`;
     button.textContent = text;
     button.title = title;
-    controls.appendChild(button);
+    actions.appendChild(button);
     return button;
   }
   const editTrigger = createTrigger('编辑', '编辑选中的 DOM 节点', 'edit');
@@ -623,6 +630,6 @@ function installElementsEditor(eruda, container) {
     viewer.off('deselect', recoverSelection);
     viewer.on('deselect', originalBack);
     root.removeEventListener('click', onClick, true);
-    editTrigger.remove(); insertTrigger.remove(); editor.remove(); style.remove();
+    actions.remove(); editor.remove(); style.remove();
   };
 }
