@@ -296,11 +296,26 @@ try {
     };
     const applyEdit = async () => evaluate(`${editor}.querySelector('button[type="submit"]').click()`);
     const cancelEdit = async () => evaluate(`${editor}.querySelector('[data-action="cancel"]').click()`);
+    const realClick = async (expression) => {
+      const point = await evaluate(`(() => {
+        const element = (${expression});
+        element.scrollIntoView({ block: 'center' });
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      })()`);
+      if (mode === 'desktop') {
+        await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
+        await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+      } else {
+        await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+        await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      }
+    };
     const openEditor = async (expression) => {
       await evaluate(`(${expression}).click()`);
-      assert.equal(await evaluate(`${editor}.hidden`), true, `${mode}：第一次点击只选中，不打开编辑器`);
-      await evaluate(`(${expression}).click()`);
-      assert.equal(await evaluate(`${editor}.hidden`), false, `${mode}：第二次点击同一位置打开编辑器`);
+      assert.equal(await evaluate(`${editor}.hidden`), true, `${mode}：点击 DOM 树只选中，不打开编辑器`);
+      await evaluate(`${root}.querySelector('.eruda-dom-edit-trigger').click()`);
+      assert.equal(await evaluate(`${editor}.hidden`), false, `${mode}：点击工具栏编辑按钮打开编辑器`);
     };
     const clickAttribute = async (name) => openEditor(`Array.from((${targetRow}).querySelectorAll('.luna-dom-viewer-attribute-name')).find(el => el.textContent === ${JSON.stringify(name)})`);
     await ensureFixtureVisible();
@@ -316,7 +331,7 @@ try {
     await expandRow(rowById('div-parent'));
     await openRow(rowById('div-empty'), 'div-empty');
     await cancelEdit();
-    // 使用真实输入事件覆盖触摸和鼠标，关闭后仍需重新点击两次。
+    // 使用真实输入事件覆盖触摸和鼠标；连续点击节点也只能选择，必须通过工具栏编辑。
     for (let attempt = 0; attempt < 2; attempt++) {
       await evaluate(`(${rowById('div-empty')}).scrollIntoView({ block: 'center' })`);
       const point = await evaluate(`(() => {
@@ -332,18 +347,17 @@ try {
           await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
           await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         }
-        assert.equal(await evaluate(`${editor}.hidden`), click === 1, `${mode}：真实输入第 ${click} 次点击的编辑器状态`);
-        if (click === 1) {
-          assert.equal(await evaluate(`(${rowById('div-empty')}).classList.contains('luna-dom-viewer-selected')`), true, '首次点击保留节点选中反馈');
-          await sleep(600);
-        }
+        assert.equal(await evaluate(`${editor}.hidden`), true, `${mode}：真实输入第 ${click} 次点击只选中`);
+        assert.equal(await evaluate(`(${rowById('div-empty')}).classList.contains('luna-dom-viewer-selected')`), true, '节点点击保留选中反馈');
+        if (click === 1) await sleep(600);
       }
+      await realClick(`${root}.querySelector('.eruda-dom-edit-trigger')`);
       await waitFor(`!${editor}.hidden`);
-      assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-edit-node').textContent`), '<div#div-empty>', '实际点击空 div 可重复打开编辑器');
+      assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-edit-node').textContent`), '<div#div-empty>', '编辑按钮打开实际选中的空 div');
       assert.equal(await evaluate(`${root}.activeElement === ${editor}.querySelector('textarea')`), true, '编辑器获得输入焦点');
       await cancelEdit();
     }
-    // 不相关的点击不能凑成两次，工具栏仍可直接编辑当前选择。
+    // 切换选择后，工具栏编辑当前节点。
     const selectOnly = async (expression) => {
       await evaluate(`(${expression}).click()`);
       assert.equal(await evaluate(`${editor}.hidden`), true, '切换编辑位置只选中');
@@ -351,7 +365,12 @@ try {
     await selectOnly(rowById('div-empty'));
     await selectOnly(rowById('div-nested'));
     await selectOnly(rowById('div-empty'));
-    await evaluate(`${root}.querySelector('.eruda-dom-edit-trigger').click()`);
+    if (['desktop', 'legacy'].includes(mode)) {
+      await mkdir(path('output/playwright'), { recursive: true });
+      const screenshot = await cdp('Page.captureScreenshot', { format: 'png' });
+      await writeFile(path(`output/playwright/elements-actions-${mode}.png`), Buffer.from(screenshot.data, 'base64'));
+    }
+    await realClick(`${root}.querySelector('.eruda-dom-edit-trigger')`);
     assert.equal(await evaluate(`${editor}.hidden`), false, '工具栏编辑按钮单击打开');
     assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-edit-node').textContent`), '<div#div-empty>');
     await cancelEdit();
@@ -475,19 +494,7 @@ try {
     assert.match(await evaluate(`${editor}.querySelector('[role="alert"]').textContent`), /页面已更新/);
     await cancelEdit();
     await checkElements({ evaluate, waitFor, editor, rowById, expandRow, openEditor, editValue, applyEdit, cancelEdit,
-      realClick: async (expression) => {
-        const point = await evaluate(`(() => {
-          const rect = (${expression}).getBoundingClientRect();
-          return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-        })()`);
-        if (mode === 'desktop') {
-          await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
-          await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
-        } else {
-          await cdp('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
-          await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-        }
-      },
+      realClick,
       screenshot: async (name) => {
         if (!['desktop', 'legacy'].includes(mode)) return;
         await mkdir(path('output/playwright'), { recursive: true });

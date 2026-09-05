@@ -1,6 +1,6 @@
 {
   "name": "eruda-offline-userscript",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "private": true,
   "type": "module",
   "description": "手机浏览器离线 Eruda 油猴脚本",

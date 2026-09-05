@@ -7,7 +7,8 @@ function installElementsEditor(eruda, container) {
   if (!viewer?.on || !controls) throw new Error('当前 Eruda 的 Elements 结构不兼容 DOM 编辑功能。');
 
   let selected = null;
-  let pendingEdit = null;
+  let selectedMode = 'html';
+  let selectedAttribute;
   let target = null;
   let operation = 'edit';
   let mode = 'html';
@@ -19,8 +20,12 @@ function installElementsEditor(eruda, container) {
   let disposed = false;
   const style = document.createElement('style');
   style.textContent = `
-    .eruda-dom-actions { float:right; display:flex; width:auto !important; height:30px; margin-right:72px; position:relative; z-index:1; }
-    .eruda-dom-action-trigger { flex:0 0 auto; width:auto !important; min-width:40px; height:30px; padding:0 8px; box-sizing:border-box; cursor:pointer; font:12px/30px system-ui,sans-serif; white-space:nowrap; color:inherit; background:transparent; border:0; }
+    .eruda-dom-actions { float:right; display:flex; width:auto !important; height:26px; margin:2px 72px 2px 0; box-sizing:border-box; position:relative; z-index:1; overflow:hidden; border:1px solid rgba(127,127,127,.4); border-radius:3px; background:rgba(127,127,127,.04); }
+    .eruda-dom-action-trigger { flex:0 0 auto; width:auto !important; min-width:40px; height:24px; padding:0 8px; box-sizing:border-box; cursor:pointer; font:12px/24px system-ui,sans-serif; white-space:nowrap; color:inherit; background:transparent; border:0; }
+    .eruda-dom-action-trigger + .eruda-dom-action-trigger { border-left:1px solid rgba(127,127,127,.4); }
+    .eruda-dom-action-trigger:active { background:rgba(127,127,127,.22); }
+    .eruda-dom-action-trigger:focus-visible { outline:1px solid currentColor; outline-offset:-2px; }
+    @media (hover:hover) { .eruda-dom-action-trigger:hover { background:rgba(127,127,127,.14); } }
     .eruda-dom-editor[hidden] { display:none !important; }
     .eruda-dom-editor { position:absolute; inset:0; z-index:10; display:flex; flex-direction:column; gap:10px; padding:12px; box-sizing:border-box; background:#fff; color:#222; font:14px/1.5 system-ui,sans-serif; overflow:hidden; }
     .eruda-dom-editor[data-theme="dark"] { background:#202124; color:#e8eaed; color-scheme:dark; }
@@ -265,7 +270,6 @@ function installElementsEditor(eruda, container) {
       : isShadow(node) ? '#shadow-root' : node.nodeType === Node.COMMENT_NODE ? '#comment' : '#text';
   }
   function openEdit(node, nextMode, attribute) {
-    pendingEdit = null;
     if (!editable(node)) return;
     target = node;
     operation = 'edit';
@@ -304,7 +308,6 @@ function installElementsEditor(eruda, container) {
     error.textContent = '';
   }
   function openInsert(node) {
-    pendingEdit = null;
     if (!editable(node)) return;
     const defaultPosition = canContain(node) ? 'beforeend' : 'afterend';
     if (!canInsertAt(node, defaultPosition)) return;
@@ -340,7 +343,10 @@ function installElementsEditor(eruda, container) {
     insertionBaseline = null;
   }
   function selectedNode(node) {
-    if (selected !== node) pendingEdit = null;
+    if (selected !== node) {
+      selectedMode = isElement(node) || isShadow(node) ? 'html' : 'text';
+      selectedAttribute = undefined;
+    }
     selected = node;
   }
   viewer.on('select', selectedNode);
@@ -366,32 +372,26 @@ function installElementsEditor(eruda, container) {
     return null;
   }
   const onClick = (event) => {
-    if (!tool.contains(event.target) || editor.contains(event.target) || event.target.closest('.luna-dom-viewer-toggle')) {
-      pendingEdit = null;
-      return;
-    }
+    if (!tool.contains(event.target) || editor.contains(event.target) || event.target.closest('.luna-dom-viewer-toggle')) return;
     const row = event.target.closest('.luna-dom-viewer-tree-item');
-    if (!row) { pendingEdit = null; return; }
+    if (!row) return;
     const rowViewer = findRowViewer(row);
     const node = rowViewer?.getOption('node');
-    if (!editable(node)) { pendingEdit = null; return; }
+    if (!editable(node)) return;
     const attribute = event.target.closest('.luna-dom-viewer-attribute');
     const name = attribute?.querySelector('.luna-dom-viewer-attribute-name')?.textContent;
     // 捕获阶段统一处理，不依赖上游在触摸端 click、桌面端 mousedown 的事件差异。
     event.stopPropagation();
     rowViewer.select();
     selected = node;
-    // 第一次只选中；再次点击同一行的同一编辑位置才打开，兼容手机两次点按。
-    if (pendingEdit?.row !== row || pendingEdit.node !== node || pendingEdit.name !== name) {
-      pendingEdit = { row, node, name };
-      return;
-    }
-    openEdit(node, name ? 'attribute' : isElement(node) || isShadow(node) ? 'html' : 'text', name);
+    selectedMode = name ? 'attribute' : isElement(node) || isShadow(node) ? 'html' : 'text';
+    selectedAttribute = name;
   };
   root.addEventListener('click', onClick, true);
   editTrigger.addEventListener('click', () => {
     const node = selected || elements._curNode;
-    openEdit(node, isElement(node) || isShadow(node) ? 'html' : 'text');
+    openEdit(node, node === selected ? selectedMode : isElement(node) || isShadow(node) ? 'html' : 'text',
+      node === selected ? selectedAttribute : undefined);
   });
   insertTrigger.addEventListener('click', () => openInsert(selected || elements._curNode));
   editor.addEventListener('click', (event) => {
