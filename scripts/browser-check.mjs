@@ -365,6 +365,29 @@ try {
     await selectOnly(rowById('div-empty'));
     await selectOnly(rowById('div-nested'));
     await selectOnly(rowById('div-empty'));
+    const actionGeometry = await evaluate(`(() => {
+      const actions = ${root}.querySelector('.eruda-dom-actions');
+      const controls = actions.parentElement;
+      const group = actions.getBoundingClientRect();
+      const control = controls.getBoundingClientRect();
+      const buttonCenters = Array.from(actions.children, (button) => {
+        const rect = button.getBoundingClientRect();
+        return rect.top + rect.height / 2;
+      });
+      const nextControl = Array.from(controls.children)
+        .filter((child) => child !== actions)
+        .map((child) => child.getBoundingClientRect())
+        .filter((rect) => rect.width && rect.left >= group.right)
+        .sort((left, right) => left.left - right.left)[0];
+      return { groupCenter: group.top + group.height / 2, controlCenter: control.top + control.height / 2,
+        buttonCenters, rightGap: nextControl ? nextControl.left - group.right : null };
+    })()`);
+    assert.ok(Math.abs(actionGeometry.groupCenter - actionGeometry.controlCenter) <= 0.5,
+      `DOM 操作按钮组在工具栏中垂直居中：${JSON.stringify(actionGeometry)}`);
+    assert.ok(actionGeometry.buttonCenters.every((center) => Math.abs(center - actionGeometry.groupCenter) <= 0.5),
+      `DOM 操作按钮文字垂直居中：${JSON.stringify(actionGeometry)}`);
+    assert.ok(actionGeometry.rightGap === null || actionGeometry.rightGap >= 8,
+      `DOM 操作按钮与右侧原生按钮至少间隔 8px：${JSON.stringify(actionGeometry)}`);
     if (['desktop', 'legacy'].includes(mode)) {
       await mkdir(path('output/playwright'), { recursive: true });
       const screenshot = await cdp('Page.captureScreenshot', { format: 'png' });

@@ -20,8 +20,8 @@ function installElementsEditor(eruda, container) {
   let disposed = false;
   const style = document.createElement('style');
   style.textContent = `
-    .eruda-dom-actions { float:right; display:flex; width:auto !important; height:26px; margin:2px 72px 2px 0; box-sizing:border-box; position:relative; z-index:1; overflow:hidden; border:1px solid rgba(127,127,127,.4); border-radius:3px; background:rgba(127,127,127,.04); }
-    .eruda-dom-action-trigger { flex:0 0 auto; width:auto !important; min-width:40px; height:24px; padding:0 8px; box-sizing:border-box; cursor:pointer; font:12px/24px system-ui,sans-serif; white-space:nowrap; color:inherit; background:transparent; border:0; }
+    .eruda-dom-actions { float:right; display:flex; width:auto !important; height:20px; margin:0 80px 0 0; box-sizing:border-box; position:relative; z-index:1; overflow:hidden; border:1px solid rgba(127,127,127,.4); border-radius:3px; background:rgba(127,127,127,.04); }
+    .eruda-dom-action-trigger { flex:0 0 auto; display:flex; align-items:center; justify-content:center; width:auto !important; min-width:40px; height:18px; padding:0 8px; box-sizing:border-box; cursor:pointer; font:12px/1 system-ui,sans-serif; white-space:nowrap; color:inherit; background:transparent; border:0; }
     .eruda-dom-action-trigger + .eruda-dom-action-trigger { border-left:1px solid rgba(127,127,127,.4); }
     .eruda-dom-action-trigger:active { background:rgba(127,127,127,.22); }
     .eruda-dom-action-trigger:focus-visible { outline:1px solid currentColor; outline-offset:-2px; }
