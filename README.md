@@ -25,7 +25,7 @@
 | 工具 | 功能 |
 | --- | --- |
 | Console | 页面日志、错误、对象检查和表达式执行 |
-| Elements | 检查 DOM 和样式，编辑节点 HTML、属性、文本及注释 |
+| Elements | 检查 DOM 和样式，插入 DOM，编辑节点 HTML、属性、文本及注释 |
 | Network | 记录启动后发出的 Fetch / XHR 请求及浏览器允许读取的响应 |
 | Sources | 查看当前 DOM 快照、内联代码和已取得的响应内容 |
 | Resources | 读写 localStorage / sessionStorage，查看可读 Cookie、内联脚本、可读 CSSOM、图片及 iframe 地址 |
@@ -37,6 +37,8 @@
 在 Elements 中，点击箭头展开节点。标签、节点行空白、属性、文本或注释第一次点击仅选中，再次点击同一行的同一编辑位置才打开编辑器，无需快速双击。标签或节点行空白编辑 HTML，属性编辑名称和值，文本或注释编辑文字；切换节点、属性、展开箭头或工具面板后，需要重新点击两次。工具栏“编辑”按钮仍可单击编辑当前选中的节点，包括通过页面取点选中的节点。
 
 编辑器支持 HTML、文本、属性模式，提供离线语法高亮及明暗主题。点击“应用修改”写回页面，“取消”或 Escape 放弃修改。
+
+工具栏“插入”按钮可在当前选中节点的之前、内部开头、内部末尾或之后插入 DOM；不支持子节点的位置会自动禁用。一次可插入多个元素、文本或注释，并按目标上下文保留表格、SVG、MathML、template 与 Shadow DOM 语义。插入位置已被页面更新时会提示重新选择。
 
 - 属性支持修改、新增、改名、删除；空值与删除分开处理，保留 SVG 属性大小写及命名空间，重名时提示冲突。
 - HTML 模式支持普通元素、表单、表格、SVG、MathML、template 和自定义元素；普通节点接受一个完整节点，ShadowRoot 接受内部 HTML 片段。html、head、body 仅允许编辑属性。
@@ -61,7 +63,7 @@ Resources 使用页面现有数据；Sources 不重新下载页面或预览远�
 src/
   userscript.js                GM API、动态菜单、偏好存储与页面注入
   page.js                      Eruda 生命周期、离线工具与悬浮球
-  elements-editor.js           DOM 编辑器、输入校验与节点差异更新
+  elements-editor.js           DOM 插入与编辑器、输入校验及节点差异更新
 vendor/
   eruda.js                     上游原始发行文件
   eruda.json                   固定版本、下载来源与完整性记录

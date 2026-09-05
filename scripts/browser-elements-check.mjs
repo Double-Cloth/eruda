@@ -21,6 +21,73 @@ export async function checkElements({ evaluate, waitFor, editor, rowById, expand
     assert.equal(await evaluate(`${editor}.querySelector('[role="alert"]').textContent`), '');
     assert.equal(await evaluate(`${editor}.hidden`), true);
   };
+  const openInsert = async (id) => {
+    await openElement(id);
+    await cancelEdit();
+    await evaluate(`${editor}.parentElement.querySelector('.eruda-dom-insert-trigger').click()`);
+    assert.equal(await evaluate(`${editor}.hidden`), false, '工具栏插入按钮单击打开');
+    assert.equal(await evaluate(`${editor}.getAttribute('aria-label')`), '插入 DOM');
+  };
+
+  await evaluate(`(() => {
+    window.insertTargetRef = document.getElementById('div-empty');
+    window.insertTargetClicks = 0;
+    insertTargetRef.addEventListener('click', () => insertTargetClicks++);
+  })()`);
+  await openInsert('div-empty');
+  assert.equal(await evaluate(`${editor}.querySelector('header strong').textContent`), '插入 DOM');
+  assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-edit-modes').hidden`), true);
+  assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-insert-positions').hidden`), false);
+  assert.deepEqual(await evaluate(`Array.from(${editor}.querySelectorAll('[data-position]')).map(button => [button.textContent, button.disabled, button.getAttribute('aria-pressed')])`), [
+    ['之前', false, 'false'], ['内部开头', false, 'false'], ['内部末尾', false, 'true'], ['之后', false, 'false'],
+  ]);
+  await applyEdit();
+  assert.match(await evaluate(`${editor}.querySelector('[role="alert"]').textContent`), /请输入/);
+  await editValue('<button id="insert-child-a" type="button">插入甲</button><!--插入注释--><span id="insert-child-b">插入乙</span>');
+  await screenshot('elements-insert');
+  await expectApplied();
+  assert.equal(await evaluate(`document.getElementById('div-empty') === insertTargetRef`), true, '插入不替换目标节点');
+  assert.deepEqual(await evaluate(`Array.from(insertTargetRef.childNodes).map(node => node.nodeType === 1 ? node.id : node.nodeValue)`),
+    ['insert-child-a', '插入注释', 'insert-child-b'], '一次插入多个元素和注释');
+  await evaluate(`insertTargetRef.click()`);
+  assert.equal(await evaluate('insertTargetClicks'), 1, '插入保留目标节点事件监听');
+
+  await openInsert('div-dynamic');
+  await evaluate(`${editor}.querySelector('[data-position="beforebegin"]').click()`);
+  await editValue('<i id="insert-before">之前</i>');
+  await expectApplied();
+  await openInsert('div-dynamic');
+  await evaluate(`${editor}.querySelector('[data-position="afterend"]').click()`);
+  await editValue('<i id="insert-after">之后</i>');
+  await expectApplied();
+  assert.deepEqual(await evaluate(`[
+    document.getElementById('div-dynamic').previousElementSibling.id,
+    document.getElementById('div-dynamic').nextElementSibling.id,
+  ]`), ['insert-before', 'insert-after'], '支持在目标节点之前和之后插入');
+
+  await openInsert('div-parent');
+  await evaluate(`${editor}.querySelector('[data-position="afterbegin"]').click()`);
+  await evaluate(`document.getElementById('div-parent').prepend(Object.assign(document.createElement('span'), { id: 'external-insert' }))`);
+  await editValue('<span id="stale-insert">不应插入</span>');
+  await applyEdit();
+  assert.match(await evaluate(`${editor}.querySelector('[role="alert"]').textContent`), /页面已更新插入位置/);
+  assert.equal(await evaluate(`document.getElementById('stale-insert')`), null, '过期位置不写入页面');
+  await cancelEdit();
+
+  for (const [id, html, expression, expected] of [
+    ['edit-tr', '<td id="insert-td-a">新增甲</td><td id="insert-td-b">新增乙</td>', `Array.from(document.getElementById('edit-tr').cells).slice(-2).map(node => [node.id, node.namespaceURI])`,
+      [['insert-td-a', 'http://www.w3.org/1999/xhtml'], ['insert-td-b', 'http://www.w3.org/1999/xhtml']]],
+    ['edit-svg-group', '<rect id="insert-rect" width="4" height="5"></rect>', `document.getElementById('insert-rect').namespaceURI`, 'http://www.w3.org/2000/svg'],
+    ['edit-math', '<mo id="insert-mo">+</mo><mn id="insert-mn">1</mn>', `Array.from(document.getElementById('edit-math').children).slice(-2).map(node => node.namespaceURI)`,
+      ['http://www.w3.org/1998/Math/MathML', 'http://www.w3.org/1998/Math/MathML']],
+    ['edit-template', '<span id="insert-template-a">模板甲</span><span id="insert-template-b">模板乙</span>', `Array.from(document.getElementById('edit-template').content.children).slice(-2).map(node => node.id)`,
+      ['insert-template-a', 'insert-template-b']],
+  ]) {
+    await openInsert(id);
+    await editValue(html);
+    await expectApplied();
+    assert.deepEqual(await evaluate(expression), expected, `${id} 按目标上下文插入`);
+  }
 
   await openElement('event-target');
   await changeMode('attribute');
@@ -165,6 +232,14 @@ export async function checkElements({ evaluate, waitFor, editor, rowById, expand
   await evaluate(`window.shadowRef = document.getElementById('div-shadow').shadowRoot; window.shadowChild = shadowRef.firstChild; window.shadowClicks = 0; shadowChild.addEventListener('click', () => shadowClicks++)`);
   await openEditor(shadowRow);
   assert.equal(await evaluate(`${editor}.querySelector('.eruda-dom-edit-node').textContent`), '#shadow-root');
+  await cancelEdit();
+  await evaluate(`${editor}.parentElement.querySelector('.eruda-dom-insert-trigger').click()`);
+  assert.deepEqual(await evaluate(`Array.from(${editor}.querySelectorAll('[data-position]')).map(button => button.disabled)`),
+    [true, false, false, true], 'ShadowRoot 仅允许在内部插入');
+  await editValue('<span id="shadow-insert-a">影子甲</span><span id="shadow-insert-b">影子乙</span>');
+  await expectApplied();
+  assert.deepEqual(await evaluate(`Array.from(shadowRef.children).slice(-2).map(node => node.id)`), ['shadow-insert-a', 'shadow-insert-b']);
+  await openEditor(shadowRow);
   await editValue('<div id="shadow-child">Shadow HTML 更新</div><span>新增影子节点</span>');
   await expectApplied();
   assert.equal(await evaluate(`shadowRef === document.getElementById('div-shadow').shadowRoot && shadowChild === shadowRef.firstChild && shadowRef.children.length === 2`), true);

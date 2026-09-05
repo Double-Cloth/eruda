@@ -9,14 +9,17 @@ function installElementsEditor(eruda, container) {
   let selected = null;
   let pendingEdit = null;
   let target = null;
+  let operation = 'edit';
   let mode = 'html';
+  let insertPosition = 'beforeend';
+  let insertionBaseline = null;
   let originalAttribute = '';
   let baseline;
   let baselineNodes;
   let disposed = false;
   const style = document.createElement('style');
   style.textContent = `
-    .eruda-dom-edit-trigger { float:right; padding:0 12px; cursor:pointer; font:inherit; color:inherit; background:transparent; border:0; height:30px; }
+    .eruda-dom-action-trigger { float:right; padding:0 12px; cursor:pointer; font:inherit; color:inherit; background:transparent; border:0; height:30px; }
     .eruda-dom-editor[hidden] { display:none !important; }
     .eruda-dom-editor { position:absolute; inset:0; z-index:10; display:flex; flex-direction:column; gap:10px; padding:12px; box-sizing:border-box; background:#fff; color:#222; font:14px/1.5 system-ui,sans-serif; overflow:hidden; }
     .eruda-dom-editor[data-theme="dark"] { background:#202124; color:#e8eaed; color-scheme:dark; }
@@ -53,14 +56,19 @@ function installElementsEditor(eruda, container) {
     .eruda-dom-editor .eruda-dom-edit-hint { font-size:12px; opacity:.8; }
     .eruda-dom-editor [role="alert"] { color:#d93025; overflow-wrap:anywhere; }
   `.replaceAll('.eruda-dom-editor', '.eruda-container .eruda-dom-editor')
-    .replaceAll('.eruda-dom-edit-trigger', '.eruda-container .eruda-dom-edit-trigger');
+    .replaceAll('.eruda-dom-action-trigger', '.eruda-container .eruda-dom-action-trigger');
   root.appendChild(style);
-  const trigger = document.createElement('button');
-  trigger.type = 'button';
-  trigger.className = 'eruda-dom-edit-trigger';
-  trigger.textContent = '编辑';
-  trigger.title = '编辑选中的 DOM 节点';
-  controls.appendChild(trigger);
+  function createTrigger(text, title, action) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `eruda-dom-action-trigger eruda-dom-${action}-trigger`;
+    button.textContent = text;
+    button.title = title;
+    controls.appendChild(button);
+    return button;
+  }
+  const editTrigger = createTrigger('编辑', '编辑选中的 DOM 节点', 'edit');
+  const insertTrigger = createTrigger('插入', '在选中的 DOM 节点附近或内部插入内容', 'insert');
   const editor = document.createElement('form');
   editor.className = 'eruda-dom-editor';
   editor.setAttribute('aria-label', '编辑 DOM');
@@ -70,10 +78,16 @@ function installElementsEditor(eruda, container) {
     <header><strong>编辑 DOM</strong><button type="button" data-action="cancel">取消</button></header>
     <div class="eruda-dom-edit-fields">
     <div class="eruda-dom-edit-node"></div>
-    <nav aria-label="编辑类型">
+    <nav class="eruda-dom-edit-modes" aria-label="编辑类型">
       <button type="button" data-mode="html">HTML</button>
       <button type="button" data-mode="text">文本</button>
       <button type="button" data-mode="attribute">属性</button>
+    </nav>
+    <nav class="eruda-dom-insert-positions" aria-label="插入位置" hidden>
+      <button type="button" data-position="beforebegin">之前</button>
+      <button type="button" data-position="afterbegin">内部开头</button>
+      <button type="button" data-position="beforeend">内部末尾</button>
+      <button type="button" data-position="afterend">之后</button>
     </nav>
     <div class="eruda-dom-edit-attributes" role="group" aria-label="现有属性"></div>
     <label class="eruda-dom-edit-name">属性名<input name="attributeName" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
@@ -85,6 +99,7 @@ function installElementsEditor(eruda, container) {
   `;
   tool.appendChild(editor);
   const value = editor.querySelector('textarea');
+  const heading = editor.querySelector('header strong');
   const highlighted = editor.querySelector('.eruda-dom-code code');
   const nameInput = editor.querySelector('input');
   const error = editor.querySelector('[role="alert"]');
@@ -93,6 +108,9 @@ function installElementsEditor(eruda, container) {
   const attributeList = editor.querySelector('.eruda-dom-edit-attributes');
   const contentLabel = editor.querySelector('.eruda-dom-edit-content span');
   const hint = editor.querySelector('.eruda-dom-edit-hint');
+  const editModes = editor.querySelector('.eruda-dom-edit-modes');
+  const insertPositions = editor.querySelector('.eruda-dom-insert-positions');
+  const submitButton = editor.querySelector('button[type="submit"]');
   const removeButton = editor.querySelector('[data-action="delete"]');
 
   let highlightFrame = 0;
@@ -158,6 +176,7 @@ function installElementsEditor(eruda, container) {
     syncCodeScroll();
   }
   value.addEventListener('input', () => {
+    error.textContent = '';
     if (!highlightFrame) highlightFrame = requestAnimationFrame(renderHighlight);
   });
   value.addEventListener('scroll', syncCodeScroll);
@@ -166,6 +185,9 @@ function installElementsEditor(eruda, container) {
   const isShadow = (node) => node?.nodeType === Node.DOCUMENT_FRAGMENT_NODE && !!node.host;
   const content = (node) => node.namespaceURI === 'http://www.w3.org/1999/xhtml' && node.localName === 'template' ? node.content : node;
   const structuralRoot = (node) => [document.documentElement, document.head, document.body].includes(node);
+  const voidElements = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+  const canContain = (node) => isShadow(node) || (isElement(node)
+    && !(node.namespaceURI === 'http://www.w3.org/1999/xhtml' && voidElements.has(node.localName)));
   const editable = (node) => node?.isConnected && ([1, 3, 8].includes(node.nodeType) || isShadow(node))
     && node !== container && node !== document.getElementById('eruda-offline-bridge')
     && node.getRootNode() !== root;
@@ -231,19 +253,85 @@ function installElementsEditor(eruda, container) {
     }
     error.textContent = '';
   }
-  function open(node, nextMode, attribute) {
+  function labelNode(node) {
+    nodeLabel.textContent = isElement(node) ? `<${node.localName}${node.id ? `#${node.id}` : ''}>`
+      : isShadow(node) ? '#shadow-root' : node.nodeType === Node.COMMENT_NODE ? '#comment' : '#text';
+  }
+  function openEdit(node, nextMode, attribute) {
     pendingEdit = null;
     if (!editable(node)) return;
     target = node;
-    nodeLabel.textContent = isElement(node) ? `<${node.localName}${node.id ? `#${node.id}` : ''}>`
-      : isShadow(node) ? '#shadow-root' : node.nodeType === Node.COMMENT_NODE ? '#comment' : '#text';
+    operation = 'edit';
+    labelNode(node);
     editor.dataset.theme = eruda.util.isDarkTheme() ? 'dark' : 'light';
+    editor.setAttribute('aria-label', '编辑 DOM');
+    heading.textContent = '编辑 DOM';
+    submitButton.textContent = '应用修改';
+    editModes.hidden = false;
+    insertPositions.hidden = true;
     setMode(structuralRoot(node) ? 'attribute' : nextMode, attribute);
     editor.querySelector('.eruda-dom-edit-fields').scrollTop = 0;
     editor.hidden = false;
     value.focus({ preventScroll: true });
   }
-  function close() { editor.hidden = true; target = null; baselineNodes = null; baseline = null; }
+  function canInsertAt(node, position) {
+    if (!editable(node)) return false;
+    if (position === 'afterbegin' || position === 'beforeend') return canContain(node);
+    return !isShadow(node) && !!node.parentNode && node.parentNode.nodeType !== Node.DOCUMENT_NODE;
+  }
+  function insertionPoint(position) {
+    if (!canInsertAt(target, position)) return null;
+    if (position === 'beforebegin') return { parent: target.parentNode, reference: target };
+    if (position === 'afterend') return { parent: target.parentNode, reference: target.nextSibling };
+    const parent = content(target);
+    return { parent, reference: position === 'afterbegin' ? parent.firstChild : null };
+  }
+  function setInsertPosition(position) {
+    if (!canInsertAt(target, position)) return;
+    insertPosition = position;
+    insertionBaseline = insertionPoint(position);
+    for (const button of insertPositions.querySelectorAll('[data-position]')) {
+      button.disabled = !canInsertAt(target, button.dataset.position);
+      button.setAttribute('aria-pressed', String(button.dataset.position === position));
+    }
+    error.textContent = '';
+  }
+  function openInsert(node) {
+    pendingEdit = null;
+    if (!editable(node)) return;
+    const defaultPosition = canContain(node) ? 'beforeend' : 'afterend';
+    if (!canInsertAt(node, defaultPosition)) return;
+    target = node;
+    operation = 'insert';
+    labelNode(node);
+    editor.dataset.theme = eruda.util.isDarkTheme() ? 'dark' : 'light';
+    editor.setAttribute('aria-label', '插入 DOM');
+    heading.textContent = '插入 DOM';
+    submitButton.textContent = '插入 DOM';
+    editModes.hidden = true;
+    insertPositions.hidden = false;
+    nameLabel.hidden = true;
+    attributeList.hidden = true;
+    removeButton.hidden = true;
+    contentLabel.textContent = 'DOM HTML';
+    hint.textContent = '可插入一个或多个元素、文本或注释；将按目标上下文保留表格、SVG 和 MathML 语义。';
+    mode = 'html';
+    value.value = '';
+    value.scrollTop = 0;
+    value.scrollLeft = 0;
+    renderHighlight();
+    setInsertPosition(defaultPosition);
+    editor.querySelector('.eruda-dom-edit-fields').scrollTop = 0;
+    editor.hidden = false;
+    value.focus({ preventScroll: true });
+  }
+  function close() {
+    editor.hidden = true;
+    target = null;
+    baselineNodes = null;
+    baseline = null;
+    insertionBaseline = null;
+  }
   function selectedNode(node) {
     if (selected !== node) pendingEdit = null;
     selected = node;
@@ -291,26 +379,32 @@ function installElementsEditor(eruda, container) {
       pendingEdit = { row, node, name };
       return;
     }
-    open(node, name ? 'attribute' : isElement(node) || isShadow(node) ? 'html' : 'text', name);
+    openEdit(node, name ? 'attribute' : isElement(node) || isShadow(node) ? 'html' : 'text', name);
   };
   root.addEventListener('click', onClick, true);
-  trigger.addEventListener('click', () => {
+  editTrigger.addEventListener('click', () => {
     const node = selected || elements._curNode;
-    open(node, isElement(node) || isShadow(node) ? 'html' : 'text');
+    openEdit(node, isElement(node) || isShadow(node) ? 'html' : 'text');
   });
+  insertTrigger.addEventListener('click', () => openInsert(selected || elements._curNode));
   editor.addEventListener('click', (event) => {
     const button = event.target.closest('button');
     if (button?.dataset.action === 'cancel') close();
-    if (button?.dataset.mode && button.dataset.mode !== mode) setMode(button.dataset.mode);
-    if (button?.dataset.attribute !== undefined) setMode('attribute', button.dataset.attribute);
-    if (button?.dataset.action === 'delete') apply(true);
+    if (operation === 'edit' && button?.dataset.mode && button.dataset.mode !== mode) setMode(button.dataset.mode);
+    if (operation === 'edit' && button?.dataset.attribute !== undefined) setMode('attribute', button.dataset.attribute);
+    if (operation === 'insert' && button?.dataset.position) setInsertPosition(button.dataset.position);
+    if (operation === 'edit' && button?.dataset.action === 'delete') apply(true);
   });
   editor.addEventListener('keydown', (event) => {
     // 输入时不要触发 DOM 树的方向键快捷操作。
     event.stopPropagation();
     if (event.key === 'Escape') { event.preventDefault(); close(); }
   });
-  editor.addEventListener('submit', (event) => { event.preventDefault(); apply(false); });
+  editor.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (operation === 'insert') insert();
+    else apply(false);
+  });
 
   function attributeFor(name) {
     const existing = target.getAttributeNode(name);
@@ -423,6 +517,49 @@ function installElementsEditor(eruda, container) {
     }
     return meaningful[0];
   }
+  function parseInsertion(source) {
+    if (!source) throw new Error('请输入要插入的 DOM。');
+    // 在无浏览上下文的文档中按插入位置的父级解析，既保留命名空间，也不预加载资源。
+    const inert = document.implementation.createHTMLDocument('');
+    const point = insertionPoint(insertPosition);
+    const context = point?.parent === content(target) && isElement(target) ? target
+      : isElement(point?.parent) ? point.parent : null;
+    const parent = context ? inert.importNode(context, false) : inert.createElement('div');
+    parent.innerHTML = source;
+    const nodes = Array.from(content(parent).childNodes);
+    const meaningful = nodes.some((node) => node.nodeType !== Node.TEXT_NODE)
+      ? nodes.filter((node) => node.nodeType !== Node.TEXT_NODE || node.textContent.trim()) : nodes;
+    if (!meaningful.length) throw new Error('请输入要插入的 DOM。');
+    return meaningful;
+  }
+  function insert() {
+    try {
+      if (!editable(target)) throw new Error('该节点已被页面移除，请重新选择。');
+      const point = insertionPoint(insertPosition);
+      if (!point || point.parent !== insertionBaseline?.parent || point.reference !== insertionBaseline.reference) {
+        throw new Error('页面已更新插入位置，请取消后重新打开插入。');
+      }
+      const desired = parseInsertion(value.value);
+      const fragment = target.ownerDocument.createDocumentFragment();
+      const inserted = desired.map((node) => target.ownerDocument.importNode(node, true));
+      fragment.append(...inserted);
+      point.parent.insertBefore(fragment, point.reference);
+      const insertedElement = inserted.find(isElement);
+      const nextSelection = insertedElement?.isConnected ? insertedElement
+        : isElement(target) ? target : isElement(point.parent) ? point.parent : point.parent.host;
+      close();
+      selected = nextSelection;
+      setTimeout(() => {
+        if (!disposed && nextSelection?.isConnected) {
+          if (isElement(nextSelection)) elements.select(nextSelection);
+          eruda.get().notify('DOM 已插入', { icon: 'success' });
+        }
+      }, 0);
+    } catch (reason) {
+      error.textContent = reason.message || String(reason);
+      error.scrollIntoView({ block: 'nearest' });
+    }
+  }
   function apply(remove) {
     try {
       if (!editable(target)) throw new Error('该节点已被页面移除，请重新选择。');
@@ -486,6 +623,6 @@ function installElementsEditor(eruda, container) {
     viewer.off('deselect', recoverSelection);
     viewer.on('deselect', originalBack);
     root.removeEventListener('click', onClick, true);
-    trigger.remove(); editor.remove(); style.remove();
+    editTrigger.remove(); insertTrigger.remove(); editor.remove(); style.remove();
   };
 }
